@@ -8,6 +8,7 @@ import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
 import type { ApiError, Character } from '../types';
+import AIServiceSelector from '../components/AIServiceSelector';
 
 // 大纲生成请求数据类型
 interface OutlineGenerateRequestData {
@@ -23,6 +24,7 @@ interface OutlineGenerateRequestData {
   plot_stage: 'development' | 'climax' | 'ending';
   model?: string;
   provider?: string;
+  provider_config_id?: string;
 }
 
 // 角色/组织条目类型（新格式）
@@ -751,6 +753,15 @@ export default function Outline() {
           </Form.Item>
 
           {/* 自定义模型选择 - 移到外层，所有模式都显示 */}
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue, setFieldsValue }) => (
+              <AIServiceSelector
+                usageType="outline"
+                value={{ provider_config_id: getFieldValue('provider_config_id'), model: getFieldValue('model') }}
+                onChange={(selection) => setFieldsValue(selection)}
+              />
+            )}
+          </Form.Item>
           {loadedModels.length > 0 && (
             <Form.Item
               label="AI模型"

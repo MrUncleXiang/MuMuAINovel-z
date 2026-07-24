@@ -133,6 +133,68 @@ export interface PresetCreateRequest {
   config: APIKeyPresetConfig;
 }
 
+// 多 LLM 服务与真实调用记录
+export interface AIProviderConfig {
+  id: string;
+  name: string;
+  protocol: 'openai' | 'anthropic' | 'gemini';
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_hint?: string;
+  default_model?: string;
+  models: string[];
+  enabled: boolean;
+  is_default: boolean;
+  sort_order: number;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIProviderConfigInput {
+  name: string;
+  protocol: 'openai' | 'anthropic' | 'gemini';
+  base_url: string;
+  api_key?: string;
+  default_model?: string;
+  models?: string[];
+  enabled?: boolean;
+  is_default?: boolean;
+  sort_order?: number;
+  notes?: string;
+}
+
+export interface AIUsageRoute {
+  usage_type: string;
+  provider_config_id?: string;
+  provider_name?: string;
+  model?: string;
+}
+
+export interface AICallLog {
+  request_id: string;
+  task_trace_id?: string;
+  project_id?: string;
+  chapter_id?: string;
+  usage_type: string;
+  provider_config_id?: string;
+  provider_name?: string;
+  protocol: string;
+  requested_model?: string;
+  actual_model: string;
+  status: 'success' | 'failed';
+  request_mode: string;
+  is_stream: boolean;
+  retry_index: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  first_token_ms?: number;
+  duration_ms?: number;
+  error_message?: string;
+  created_at: string;
+}
+
 export interface PresetUpdateRequest {
   name?: string;
   description?: string;

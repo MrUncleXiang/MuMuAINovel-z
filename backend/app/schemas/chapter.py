@@ -96,6 +96,14 @@ class BatchAnalysisStatusResponse(BaseModel):
 class BatchAnalyzeUnanalyzedRequest(BaseModel):
     """一键分析未分析章节请求"""
     chapter_ids: Optional[List[str]] = Field(None, description="可选：限定待分析章节ID列表；为空则自动识别项目内全部未分析章节")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="本次指定模型；为空时按任务默认配置解析")
+
+
+class ChapterAnalysisRequest(BaseModel):
+    """单章分析时可临时覆盖默认AI服务。"""
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="本次指定模型；为空时按任务默认配置解析")
 
 
 class BatchAnalyzeUnanalyzedResponse(BaseModel):
@@ -120,6 +128,7 @@ class ChapterGenerateRequest(BaseModel):
     )
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索参考资料）")
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
 
@@ -139,6 +148,7 @@ class BatchGenerateRequest(BaseModel):
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索参考资料）")
     max_retries: int = Field(3, description="每个章节的最大重试次数", ge=0, le=5)
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
     narrative_perspective: Optional[str] = Field(None, description="临时指定叙事人称，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
 

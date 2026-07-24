@@ -46,14 +46,25 @@ async def polish_text(
         
         logger.info(f"开始AI去味处理，原文长度: {len(request.original_text)}")
         
+        from app.services.ai_provider_service import create_routed_ai_service
+        routed_ai_service = await create_routed_ai_service(
+            db,
+            user_id=user_id,
+            usage_type="polish",
+            provider_config_id=request.provider_config_id,
+            model=request.model,
+            project_id=str(request.project_id) if request.project_id else None,
+            enable_mcp=False,
+        )
+
         # 调用AI进行去味处理
-        polished_text = await user_ai_service.generate_text(
+        result = await routed_ai_service.generate_text(
             prompt=prompt,
-            provider=request.provider,
             model=request.model,
             temperature=request.temperature,
             max_tokens=len(request.original_text) * 2  # 预留足够token
         )
+        polished_text = result.get("content", "") if isinstance(result, dict) else str(result)
         
         # 计算字数
         word_count_before = len(request.original_text)
@@ -65,11 +76,9 @@ async def polish_text(
         if request.project_id:
             history = GenerationHistory(
                 project_id=request.project_id,
-                generation_type="polish",
                 prompt=f"原文: {request.original_text[:100]}...",
-                result=polished_text,
-                provider=request.provider or "default",
-                model=request.model or "default"
+                generated_content=polished_text,
+                model=routed_ai_service.model_name,
             )
             db.add(history)
             await db.commit()

@@ -6,6 +6,7 @@
 - 通过 auto_mcp 参数控制是否启用自动工具加载
 """
 from typing import Optional, AsyncGenerator, List, Dict, Any, Union
+import uuid
 
 from app.config import settings as app_settings
 from app.logger import get_logger
@@ -93,6 +94,12 @@ class AIService:
         user_id: Optional[str] = None,
         db_session: Optional[Any] = None,
         enable_mcp: bool = True,
+        usage_type: str = "default",
+        provider_config_id: Optional[str] = None,
+        provider_name: Optional[str] = None,
+        project_id: Optional[str] = None,
+        chapter_id: Optional[str] = None,
+        task_trace_id: Optional[str] = None,
     ):
         self.raw_api_provider = (api_provider or app_settings.default_ai_provider or "openai").lower().strip()
         self.api_provider = normalize_provider(self.raw_api_provider)
@@ -106,6 +113,12 @@ class AIService:
         self.user_id = user_id
         self.db_session = db_session
         self._enable_mcp = enable_mcp
+        self.usage_type = usage_type or "default"
+        self.provider_config_id = provider_config_id
+        self.provider_name = provider_name or self.raw_api_provider
+        self.project_id = project_id
+        self.chapter_id = chapter_id
+        self.task_trace_id = task_trace_id or str(uuid.uuid4())
         self._cached_tools: Optional[List[Dict]] = None
         self._tools_loaded = False
         
@@ -202,13 +215,59 @@ class AIService:
             prompt_length=len(prompt or ""),
         )
 
-    def _log_call_metrics(self, metrics: AICallMetrics, title: Optional[str] = None):
+    async def _log_call_metrics(self, metrics: AICallMetrics, title: Optional[str] = None):
         log_title = title or ("AI调用完成" if metrics.success else "AI调用失败")
         message = metrics.to_log_message(log_title)
         if metrics.success:
             logger.info(message)
         else:
             logger.error(message)
+
+        await self._persist_call_metrics(metrics)
+
+    async def _persist_call_metrics(self, metrics: AICallMetrics) -> None:
+        """保存一次真实模型调用；不保存密钥、接口地址、提示词或正文。"""
+        if not self.user_id or self.db_session is None:
+            return
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+            from app.models.ai_call_log import AICallLog
+
+            session_factory = async_sessionmaker(
+                self.db_session.bind, class_=AsyncSession, expire_on_commit=False
+            )
+            async with session_factory() as audit_db:
+                audit_db.add(AICallLog(
+                    request_id=str(uuid.uuid4()),
+                    task_trace_id=self.task_trace_id,
+                    user_id=self.user_id,
+                    project_id=self.project_id,
+                    chapter_id=self.chapter_id,
+                    usage_type=self.usage_type,
+                    provider_config_id=self.provider_config_id,
+                    provider_name=self.provider_name,
+                    protocol=metrics.provider,
+                    requested_model=metrics.model,
+                    actual_model=metrics.model,
+                    status="success" if metrics.success else "failed",
+                    request_mode=metrics.request_mode,
+                    is_stream=metrics.stream,
+                    retry_index=metrics.retry_count,
+                    prompt_tokens=metrics.usage.prompt_tokens,
+                    completion_tokens=metrics.usage.completion_tokens,
+                    total_tokens=metrics.usage.total_tokens,
+                    prompt_length=metrics.prompt_length,
+                    response_length=metrics.response_length,
+                    first_token_ms=metrics.ttft_ms,
+                    duration_ms=metrics.duration_ms,
+                    finish_reason=metrics.finish_reason,
+                    error_type=metrics.error_type,
+                    error_message=metrics.error_message,
+                ))
+                await audit_db.commit()
+        except Exception as exc:
+            # 记录功能故障不能反过来中断小说生成。
+            logger.error("保存 AI 调用记录失败: %s", exc)
 
     async def _prepare_mcp_tools(self, auto_mcp: bool = True, force_refresh: bool = False) -> Optional[List[Dict]]:
         """
@@ -479,11 +538,11 @@ class AIService:
                 finish_reason=response.get("finish_reason"),
                 usage=usage,
             )
-            self._log_call_metrics(metrics)
+            await self._log_call_metrics(metrics)
             return response
         except Exception as e:
             metrics.finish(success=False, error=e)
-            self._log_call_metrics(metrics)
+            await self._log_call_metrics(metrics)
             raise
 
     async def generate_text_stream(
@@ -573,7 +632,7 @@ class AIService:
                 finish_reason=finish_reason,
                 usage=latest_usage,
             )
-            self._log_call_metrics(metrics)
+            await self._log_call_metrics(metrics)
         except Exception as e:
             metrics.finish(
                 success=False,
@@ -582,7 +641,7 @@ class AIService:
                 usage=latest_usage,
                 error=e,
             )
-            self._log_call_metrics(metrics)
+            await self._log_call_metrics(metrics)
             raise
 
     async def call_with_json_retry(
@@ -659,7 +718,7 @@ class AIService:
                         finish_reason=result.get("finish_reason"),
                         usage=aggregate_usage,
                     )
-                    self._log_call_metrics(metrics, title="AI调用汇总")
+                    await self._log_call_metrics(metrics, title="AI调用汇总")
                     return data
                 except Exception as e:
                     metrics.json_parse_success = False
@@ -674,7 +733,7 @@ class AIService:
                 usage=aggregate_usage,
                 error=e,
             )
-            self._log_call_metrics(metrics, title="AI调用汇总")
+            await self._log_call_metrics(metrics, title="AI调用汇总")
             raise
 
     @staticmethod
@@ -719,6 +778,12 @@ def create_user_ai_service_with_mcp(
     db_session,
     system_prompt: Optional[str] = None,
     enable_mcp: bool = True,
+    usage_type: str = "default",
+    provider_config_id: Optional[str] = None,
+    provider_name: Optional[str] = None,
+    project_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    task_trace_id: Optional[str] = None,
 ) -> AIService:
     """
     创建支持MCP的用户AI服务
@@ -749,4 +814,10 @@ def create_user_ai_service_with_mcp(
         user_id=user_id,
         db_session=db_session,
         enable_mcp=enable_mcp,
+        usage_type=usage_type,
+        provider_config_id=provider_config_id,
+        provider_name=provider_name,
+        project_id=project_id,
+        chapter_id=chapter_id,
+        task_trace_id=task_trace_id,
     )

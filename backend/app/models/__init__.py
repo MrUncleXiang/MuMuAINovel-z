@@ -20,6 +20,8 @@ from app.models.foreshadow import Foreshadow
 from app.models.prompt_workshop import PromptWorkshopItem, PromptSubmission, PromptWorkshopLike
 from app.models.background_task import BackgroundTask
 from app.models.announcement import Announcement
+from app.models.ai_provider_config import AIProviderConfig, AIUsageRoute
+from app.models.ai_call_log import AICallLog
 
 __all__ = [
     "Project",
@@ -50,5 +52,8 @@ __all__ = [
     "PromptSubmission",
     "PromptWorkshopLike",
     "BackgroundTask",
-    "Announcement"
+    "Announcement",
+    "AIProviderConfig",
+    "AIUsageRoute",
+    "AICallLog"
 ]

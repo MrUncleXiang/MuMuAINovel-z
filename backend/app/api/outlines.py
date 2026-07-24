@@ -1855,9 +1855,18 @@ async def generate_outline_task(
             try:
                 await tracker.start()
                 
-                # 获取AI服务（需要在后台创建新实例）
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+                # 本次手选 > 大纲任务默认路由 > 用户默认服务 > 旧版设置
+                from app.services.ai_provider_service import create_routed_ai_service
+                bg_ai_service = await create_routed_ai_service(
+                    bg_db,
+                    user_id=user_id,
+                    usage_type="outline",
+                    provider_config_id=data.get("provider_config_id"),
+                    model=data.get("model"),
+                    project_id=data.get("project_id"),
+                    task_trace_id=task_id,
+                    enable_mcp=data.get("enable_mcp", True),
+                )
                 
                 if mode == "new":
                     await _run_new_outline_bg(data, bg_db, bg_ai_service, tracker)

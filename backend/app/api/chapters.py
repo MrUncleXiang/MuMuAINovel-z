@@ -38,6 +38,7 @@ from app.schemas.chapter import (
     BatchAnalysisStatusResponse,
     BatchAnalyzeUnanalyzedRequest,
     BatchAnalyzeUnanalyzedResponse,
+    ChapterAnalysisRequest,
     ChapterGenerateRequest,
     BatchGenerateRequest,
     BatchGenerateResponse,
@@ -57,7 +58,8 @@ from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
+from app.api.settings import get_user_ai_service
+from app.services.ai_provider_service import create_routed_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
@@ -888,7 +890,9 @@ async def analyze_chapter_background(
     user_id: str,
     project_id: str,
     task_id: str,
-    ai_service: Optional[AIService] = None
+    ai_service: Optional[AIService] = None,
+    provider_config_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> bool:
     """执行有硬超时保障的章节分析，并确保中断后任务进入终态。"""
     try:
@@ -899,6 +903,8 @@ async def analyze_chapter_background(
                 project_id=project_id,
                 task_id=task_id,
                 ai_service=ai_service,
+                provider_config_id=provider_config_id,
+                model=model,
             ),
             timeout=ANALYSIS_TASK_TIMEOUT_SECONDS,
         )
@@ -925,7 +931,9 @@ async def _analyze_chapter_background_impl(
     user_id: str,
     project_id: str,
     task_id: str,
-    ai_service: Optional[AIService] = None
+    ai_service: Optional[AIService] = None,
+    provider_config_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> bool:
     """
     后台异步分析章节（支持并发，使用锁保护数据库写入）
@@ -997,10 +1005,16 @@ async def _analyze_chapter_background_impl(
             await db_session.commit()
         
         if ai_service is None:
-            ai_service = await get_user_ai_service_from_db_by_usage(
-                user_id=user_id,
+            ai_service = await create_routed_ai_service(
                 db=db_session,
-                usage="chapter_analysis"
+                user_id=user_id,
+                usage_type="chapter_analysis",
+                provider_config_id=provider_config_id,
+                model=model,
+                task_trace_id=task_id,
+                project_id=project_id,
+                chapter_id=chapter_id,
+                enable_mcp=True,
             )
 
         # 获取已埋入的伏笔列表（用于回收匹配，传入当前章节号以启用智能标记）
@@ -1511,6 +1525,19 @@ async def generate_chapter_content_stream(
                 if not project:
                     yield await tracker.error("项目不存在", 404)
                     return
+
+                # 统一解析：本次手选 > 章节写作默认路由 > 用户默认服务 > 旧版设置。
+                from app.services.ai_provider_service import create_routed_ai_service
+                routed_ai_service = await create_routed_ai_service(
+                    db_session,
+                    user_id=current_user_id,
+                    usage_type="chapter_write",
+                    provider_config_id=generate_request.provider_config_id,
+                    model=generate_request.model,
+                    project_id=current_chapter.project_id,
+                    chapter_id=current_chapter.id,
+                    enable_mcp=generate_request.enable_mcp,
+                )
                 
                 # 获取项目的大纲模式
                 outline_mode = project.outline_mode if project else 'one-to-many'
@@ -1796,7 +1823,7 @@ async def generate_chapter_content_stream(
                     estimated_total=target_word_count
                 )
                 
-                async for chunk in user_ai_service.generate_text_stream(**generate_kwargs):
+                async for chunk in routed_ai_service.generate_text_stream(**generate_kwargs):
                     full_content += chunk
                     chunk_count += 1
                     
@@ -1886,7 +1913,7 @@ async def generate_chapter_content_stream(
                     user_id=current_user_id,
                     project_id=project.id,
                     task_id=task_id,
-                    ai_service=user_ai_service
+                    ai_service=routed_ai_service
                 )
                 
                 yield await tracker.saving("章节保存完成", 0.8)
@@ -2003,6 +2030,7 @@ async def generate_chapter_content_background(
             "target_word_count": generate_request.target_word_count or 3000,
             "enable_mcp": generate_request.enable_mcp,
             "model": generate_request.model,
+            "provider_config_id": generate_request.provider_config_id,
             "narrative_perspective": generate_request.narrative_perspective,
             "skill_key": generate_request.skill_key,
         },
@@ -2023,8 +2051,18 @@ async def generate_chapter_content_background(
                 await tracker.start()
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.services.ai_provider_service import create_routed_ai_service
+                bg_ai_service = await create_routed_ai_service(
+                    bg_db,
+                    user_id=bg_user_id,
+                    usage_type="chapter_write",
+                    provider_config_id=generate_request.provider_config_id,
+                    model=generate_request.model,
+                    project_id=chapter.project_id,
+                    chapter_id=chapter_id,
+                    task_trace_id=task_id,
+                    enable_mcp=generate_request.enable_mcp,
+                )
 
                 await _run_chapter_generation_bg(
                     task_input={
@@ -2033,6 +2071,7 @@ async def generate_chapter_content_background(
                         "target_word_count": generate_request.target_word_count or 3000,
                         "enable_mcp": generate_request.enable_mcp,
                         "model": generate_request.model,
+                        "provider_config_id": generate_request.provider_config_id,
                         "narrative_perspective": generate_request.narrative_perspective,
                         "skill_key": generate_request.skill_key,
                     },
@@ -3121,7 +3160,9 @@ async def _run_batch_analysis_in_sequence(
     tasks_queue: list[dict[str, int | str]],
     user_id: str,
     project_id: str,
-    ai_service: Optional[AIService] = None
+    ai_service: Optional[AIService] = None,
+    provider_config_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> None:
     """按章节顺序逐个执行分析任务。"""
     for index, task_item in enumerate(tasks_queue, start=1):
@@ -3136,7 +3177,9 @@ async def _run_batch_analysis_in_sequence(
                 user_id=user_id,
                 project_id=project_id,
                 task_id=task_id,
-                ai_service=ai_service
+                ai_service=ai_service,
+                provider_config_id=provider_config_id,
+                model=model,
             )
             if not success:
                 logger.warning(f"⚠️ 一键顺序分析返回失败: chapter_id={chapter_id}, task_id={task_id}")
@@ -3264,7 +3307,9 @@ async def batch_analyze_unanalyzed_chapters(
             _run_batch_analysis_in_sequence(
                 tasks_queue=tasks_queue,
                 user_id=user_id,
-                project_id=project_id
+                project_id=project_id,
+                provider_config_id=payload.provider_config_id,
+                model=payload.model,
             )
         )
 
@@ -3496,6 +3541,7 @@ async def trigger_chapter_analysis(
     chapter_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
+    payload: ChapterAnalysisRequest = ChapterAnalysisRequest(),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -3569,7 +3615,9 @@ async def trigger_chapter_analysis(
         chapter_id=chapter_id,
         user_id=user_id,
         project_id=project.id,
-        task_id=task_id
+        task_id=task_id,
+        provider_config_id=payload.provider_config_id,
+        model=payload.model,
     )
     
     return {
@@ -5265,4 +5313,3 @@ async def apply_partial_regenerate(
         "old_word_count": old_word_count,
         "message": "局部重写已应用"
     }
-

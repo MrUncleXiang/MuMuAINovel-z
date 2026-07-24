@@ -23,6 +23,7 @@ import PromptTemplates from './pages/PromptTemplates';
 import SkillChat from './pages/SkillChat';
 import SkillManage from './pages/SkillManage';
 import Sponsor from './pages/Sponsor';
+import AIUsageLogs from './pages/AIUsageLogs';
 // import Polish from './pages/Polish';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
@@ -71,6 +72,7 @@ function App() {
             <Route path="prompt-workshop" element={<PromptWorkshop />} />
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
+            <Route path="ai-usage" element={<AIUsageLogs />} />
             <Route path="sponsor" element={<Sponsor />} />
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>

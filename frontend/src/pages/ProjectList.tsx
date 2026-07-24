@@ -17,6 +17,7 @@ import SystemSettingsPage from './SystemSettings';
 import MCPPluginsPage from './MCPPlugins';
 import PromptTemplates from './PromptTemplates';
 import BookImport from './BookImport';
+import AIProviderManagement from './AIProviderManagement';
 import BookshelfPage from './BookshelfPage';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import AnnouncementTimelineModal from '../components/AnnouncementTimelineModal';
@@ -44,11 +45,11 @@ const formatWordCount = (count: number): string => {
   }
 };
 
-type ProjectListView = 'projects' | 'settings' | 'system-settings' | 'mcp' | 'prompts' | 'book-import';
+type ProjectListView = 'projects' | 'settings' | 'ai-services' | 'system-settings' | 'mcp' | 'prompts' | 'book-import';
 
 const parseViewFromSearch = (search: string): ProjectListView => {
   const view = new URLSearchParams(search).get('view');
-  if (view === 'settings' || view === 'system-settings' || view === 'mcp' || view === 'prompts' || view === 'book-import' || view === 'projects') {
+  if (view === 'settings' || view === 'ai-services' || view === 'system-settings' || view === 'mcp' || view === 'prompts' || view === 'book-import' || view === 'projects') {
     return view;
   }
   return 'projects';
@@ -406,7 +407,7 @@ export default function ProjectList() {
           ? 'MCP 插件'
           : activeView === 'system-settings'
             ? '系统设置'
-            : 'API 设置';
+            : activeView === 'ai-services' ? 'AI 服务管理' : 'API 设置';
 
   const isAdmin = !!currentUser?.is_admin;
 
@@ -441,6 +442,11 @@ export default function ProjectList() {
       type: 'group' as const,
       label: '系统设置',
       children: [
+        {
+          key: 'ai-services',
+          icon: <ApiOutlined />,
+          label: 'AI 服务管理',
+        },
         {
           key: 'settings',
           icon: <SettingOutlined />,
@@ -480,6 +486,11 @@ export default function ProjectList() {
       key: 'prompts',
       icon: <FileSearchOutlined />,
       label: '提示词管理',
+    },
+    {
+      key: 'ai-services',
+      icon: <ApiOutlined />,
+      label: 'AI 服务管理',
     },
     {
       key: 'settings',
@@ -889,6 +900,7 @@ export default function ProjectList() {
           }}
         >
           {activeView === 'settings' && <SettingsPage />}
+          {activeView === 'ai-services' && <AIProviderManagement />}
           {activeView === 'system-settings' && <SystemSettingsPage />}
           {activeView === 'mcp' && <MCPPluginsPage />}
           {activeView === 'prompts' && <PromptTemplates />}

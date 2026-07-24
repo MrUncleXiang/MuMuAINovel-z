@@ -254,6 +254,7 @@ export async function generateChapterBackground(
     model?: string | null;
     narrative_perspective?: string | null;
     enable_mcp?: boolean;
+    provider_config_id?: string;
   },
   onProgress: TaskProgressCallback,
   onComplete: TaskCompleteCallback,

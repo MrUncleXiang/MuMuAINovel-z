@@ -16,6 +16,7 @@ import {
 import type { AnalysisTask, ChapterAnalysisResponse } from '../types';
 import ChapterRegenerationModal from './ChapterRegenerationModal';
 import ChapterContentComparison from './ChapterContentComparison';
+import AIServiceSelector, { type AIServiceSelection } from './AIServiceSelector';
 
 // 判断是否为移动设备
 const isMobileDevice = () => window.innerWidth < 768;
@@ -38,6 +39,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
   const [chapterInfo, setChapterInfo] = useState<{ title: string; chapter_number: number; content: string } | null>(null);
   const [newGeneratedContent, setNewGeneratedContent] = useState('');
   const [newContentWordCount, setNewContentWordCount] = useState(0);
+  const [aiSelection, setAISelection] = useState<AIServiceSelection>({});
   const pollTimerRef = useRef<number | null>(null);
   const requestGenerationRef = useRef(0);
 
@@ -219,7 +221,9 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
       await loadChapterInfo();
 
       const response = await fetch(`/api/chapters/${chapterId}/analyze`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(aiSelection),
       });
 
       if (!response.ok) {
@@ -815,6 +819,11 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         )
       ].filter(Boolean)}
     >
+      {(!task || task.status === 'failed' || task.status === 'completed') && !loading && (
+        <Card size="small" title="本次分析使用的 AI" style={{ marginBottom: 16 }}>
+          <AIServiceSelector usageType="chapter_analysis" value={aiSelection} onChange={setAISelection} />
+        </Card>
+      )}
       {loading && !task && (
         <div style={{ textAlign: 'center', padding: '48px' }}>
           <Spin size="large" />

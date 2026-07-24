@@ -64,6 +64,10 @@ import type {
   BatchAnalysisStatusResponse,
   BatchAnalyzeUnanalyzedRequest,
   BatchAnalyzeUnanalyzedResponse,
+  AIProviderConfig,
+  AIProviderConfigInput,
+  AIUsageRoute,
+  AICallLog,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -338,6 +342,26 @@ export const settingsApi = {
 
   testSystemSMTPSettings: (data: { to_email: string }) =>
     api.post<unknown, { success: boolean; message: string }>('/settings/system/smtp/test', data),
+};
+
+export const aiProviderApi = {
+  list: () => api.get<unknown, AIProviderConfig[]>('/ai-providers'),
+  create: (data: AIProviderConfigInput) =>
+    api.post<unknown, AIProviderConfig>('/ai-providers', data),
+  update: (id: string, data: Partial<AIProviderConfigInput>) =>
+    api.put<unknown, AIProviderConfig>(`/ai-providers/${id}`, data),
+  remove: (id: string) => api.delete(`/ai-providers/${id}`),
+  test: (id: string) => api.post<unknown, { success: boolean; message: string }>(`/ai-providers/${id}/test`),
+  syncModels: (id: string) => api.post<unknown, { models: string[]; count: number }>(`/ai-providers/${id}/sync-models`),
+  listRoutes: () => api.get<unknown, AIUsageRoute[]>('/ai-providers/routes'),
+  saveRoute: (usageType: string, data: { provider_config_id?: string; model?: string }) =>
+    api.put<unknown, AIUsageRoute>(`/ai-providers/routes/${usageType}`, data),
+  resolve: (usageType: string, params?: { provider_config_id?: string; model?: string }) =>
+    api.get<unknown, { source: string; usage_type: string; provider_config_id?: string; provider_name: string; protocol: string; model: string }>(`/ai-providers/selection/${usageType}`, { params }),
+  logs: (params?: { project_id?: string; usage_type?: string; provider_config_id?: string; model?: string; status?: string; limit?: number; offset?: number }) =>
+    api.get<unknown, { items: AICallLog[]; total: number }>('/ai-providers/logs', { params }),
+  summary: (projectId?: string) =>
+    api.get<unknown, { total_calls: number; success_calls: number; failed_calls: number; total_tokens: number; average_duration_ms?: number }>('/ai-providers/logs/summary', { params: projectId ? { project_id: projectId } : undefined }),
 };
 
 export const projectApi = {

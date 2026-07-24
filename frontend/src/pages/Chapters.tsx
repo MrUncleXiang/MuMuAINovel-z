@@ -5,6 +5,7 @@ import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
+import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
 import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
@@ -64,6 +65,7 @@ export default function Chapters() {
   const [targetWordCount, setTargetWordCount] = useState<number>(getCachedWordCount);
   const [availableModels, setAvailableModels] = useState<Array<{ value: string, label: string }>>([]);
   const [selectedModel, setSelectedModel] = useState<string | undefined>();
+  const [aiServiceSelection, setAIServiceSelection] = useState<AIServiceSelection>({});
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
   const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
@@ -896,7 +898,8 @@ export default function Chapters() {
         },
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey  // 传递选中的Skill
+        selectedSkillKey,  // 传递选中的Skill
+        aiServiceSelection.provider_config_id
       );
 
       message.success('AI创作成功，正在分析章节内容...');
@@ -1046,6 +1049,7 @@ export default function Chapters() {
           target_word_count: targetWordCount,
           model: selectedModel,
           narrative_perspective: temporaryNarrativePerspective,
+          provider_config_id: aiServiceSelection.provider_config_id,
         },
         () => {
           // 进度更新由悬浮任务框处理，无需额外操作
@@ -2696,6 +2700,15 @@ export default function Chapters() {
           </div>
 
           {/* 第二行：目标字数 + AI模型 + Skill */}
+          <AIServiceSelector
+            usageType="chapter_write"
+            value={{ ...aiServiceSelection, model: selectedModel }}
+            onChange={(selection) => {
+              setAIServiceSelection(selection);
+              setSelectedModel(selection.model);
+            }}
+            disabled={isGenerating}
+          />
           <div style={{
             display: isMobile ? 'block' : 'flex',
             gap: isMobile ? 0 : 16,
