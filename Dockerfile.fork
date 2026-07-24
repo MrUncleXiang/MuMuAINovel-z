@@ -1,0 +1,25 @@
+# 低资源机器专用二开镜像。
+# 复用官方 MuMuAINovel 的 Python 依赖和离线向量模型，只叠加本 Fork 的代码。
+# 这样部署机器已有的 2GB+ 基础层无需重新下载。
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN sed -i "s|outDir: '../backend/static'|outDir: 'dist'|g" vite.config.ts \
+    && npm run build
+
+FROM mumujie/mumuainovel:latest
+
+WORKDIR /app
+
+# 后端业务代码（运行依赖沿用官方镜像）
+COPY backend/app ./app
+
+# 新增的数据库迁移和当前迁移配置
+COPY backend/alembic/postgres ./alembic
+COPY backend/alembic-postgres.ini ./alembic.ini
+
+# 前端构建产物
+COPY --from=frontend-builder /frontend/dist ./static
