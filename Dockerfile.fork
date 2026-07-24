@@ -10,7 +10,9 @@ COPY frontend/ ./
 RUN sed -i "s|outDir: '../backend/static'|outDir: 'dist'|g" vite.config.ts \
     && npm run build
 
-FROM mumujie/mumuainovel:latest
+# 锁定到本机当前稳定运行的 v1.4.9 镜像，确保部署时复用已有基础层，
+# 也避免上游 latest 更新后悄悄改变运行环境。
+FROM mumujie/mumuainovel@sha256:e212ef28ac02810f9c284f943a7e98500971ff0b954bcb4b1701d7c134076524
 
 WORKDIR /app
 
