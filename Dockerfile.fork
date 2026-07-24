@@ -19,8 +19,9 @@ WORKDIR /app
 # 后端业务代码（运行依赖沿用官方镜像）
 COPY backend/app ./app
 
-# 新增的数据库迁移和当前迁移配置
-COPY backend/alembic/postgres ./alembic
+# 新增的数据库迁移和当前迁移配置。
+# 官方 v1.4.9 的 alembic.ini 使用 alembic/postgres，不能覆盖成 alembic/versions。
+COPY backend/alembic/postgres ./alembic/postgres
 COPY backend/alembic-postgres.ini ./alembic.ini
 
 # 前端构建产物
