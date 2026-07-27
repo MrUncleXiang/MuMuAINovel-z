@@ -26,3 +26,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 章节多 LLM 候选比较
+
+**Date**: 2026-07-27
+**Task**: 章节多 LLM 候选比较
+**Branch**: `main`
+
+### Summary
+
+完成同输入冻结、2至4模型并发候选、失败重试、编辑复制、双结果差异和事务化采用；正式章节仅在确认采用时修改。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `14c1d54` | (see git log) |
+
+### Status
+
+[OK] **Completed**
