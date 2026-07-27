@@ -131,3 +131,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 改进 LLM 渠道测试反馈
+
+**Date**: 2026-07-27
+**Task**: 改进 LLM 渠道测试反馈
+**Branch**: `main`
+
+### Summary
+
+将 LLM 渠道测试专用超时延长到 5 分钟，增加行内最近测试状态、耗时和结果，保留上游 HTTP 错误正文并取消重复测试弹窗；完成构建、9 条测试和 19000 端口部署。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5f8c659ec757eea94c0c0a8b64ef2d9d60e05414` | (see git log) |
+
+### Status
+
+[OK] **Completed**
