@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { Alert, Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { aiProviderApi } from '../services/api';
@@ -20,6 +21,28 @@ const PRESETS: Record<string, Pick<ProviderForm, 'protocol' | 'wire_api' | 'base
 
 type ProviderForm = Omit<AIProviderConfigInput, 'models'> & { models?: string };
 
+type ProviderTestRecord = {
+  status: 'testing' | 'success' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+  message: string;
+};
+
+const providerTestErrorMessage = (error: unknown): string => {
+  if (axios.isAxiosError<{ detail?: string; message?: string }>(error)) {
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return '等待超过 5 分钟，供应商仍未响应，本次测试已超时';
+    }
+    return error.response?.data?.detail || error.response?.data?.message || error.message || '连接测试失败';
+  }
+  return error instanceof Error ? error.message : '连接测试失败';
+};
+
+const testDuration = (record: ProviderTestRecord): string => {
+  if (!record.completedAt) return '';
+  return `${((record.completedAt - record.startedAt) / 1000).toFixed(1)} 秒`;
+};
+
 export default function AIProviderManagement() {
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [routes, setRoutes] = useState<AIUsageRoute[]>([]);
@@ -27,6 +50,7 @@ export default function AIProviderManagement() {
   const [editing, setEditing] = useState<AIProviderConfig | null>(null);
   const [open, setOpen] = useState(false);
   const [actionId, setActionId] = useState<string>();
+  const [testRecords, setTestRecords] = useState<Record<string, ProviderTestRecord>>({});
   const [form] = Form.useForm<ProviderForm>();
   const selectedProtocol = Form.useWatch('protocol', form);
 
@@ -70,6 +94,46 @@ export default function AIProviderManagement() {
       await load(); message.success('任务默认服务已保存');
     } catch { message.error('保存任务默认服务失败'); }
   };
+  const testProvider = async (providerId: string) => {
+    const startedAt = Date.now();
+    setTestRecords(previous => ({
+      ...previous,
+      [providerId]: { status: 'testing', startedAt, message: '正在等待供应商响应' },
+    }));
+    try {
+      const result = await aiProviderApi.test(providerId);
+      setTestRecords(previous => ({
+        ...previous,
+        [providerId]: { status: 'success', startedAt, completedAt: Date.now(), message: result.message },
+      }));
+    } catch (error: unknown) {
+      setTestRecords(previous => ({
+        ...previous,
+        [providerId]: { status: 'failed', startedAt, completedAt: Date.now(), message: providerTestErrorMessage(error) },
+      }));
+    }
+  };
+  const removeProvider = async (providerId: string) => {
+    await aiProviderApi.remove(providerId);
+    setTestRecords(previous => {
+      const next = { ...previous };
+      delete next[providerId];
+      return next;
+    });
+    await load();
+  };
+
+  const renderTestRecord = (providerId: string) => {
+    const record = testRecords[providerId];
+    if (!record) return <Text type="secondary">尚未测试</Text>;
+    const time = new Date(record.completedAt || record.startedAt).toLocaleTimeString('zh-CN', { hour12: false });
+    const color = record.status === 'testing' ? 'processing' : record.status === 'success' ? 'success' : 'error';
+    const label = record.status === 'testing' ? '测试中' : record.status === 'success' ? '成功' : '失败';
+    return <Space direction="vertical" size={2} style={{ maxWidth: 280 }}>
+      <Space size={4} wrap><Tag color={color} style={{ marginInlineEnd: 0 }}>{label}</Tag><Text type="secondary">{time}{record.completedAt ? ` · ${testDuration(record)}` : ''}</Text></Space>
+      <Text ellipsis={{ tooltip: record.message }} style={{ maxWidth: 280 }}>{record.message}</Text>
+    </Space>;
+  };
 
   return <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
@@ -79,13 +143,14 @@ export default function AIProviderManagement() {
       </Row>
       <Alert type="info" showIcon message="原来的 API 设置仍然保留" description="未添加服务时继续使用旧设置；添加后可指定全局默认，也可为写作、分析等任务分别设默认值。API Key 只保存在后端，页面不会回显完整内容。" />
       <Card title="已添加的服务">
-        <Table rowKey="id" loading={loading} pagination={false} dataSource={providers} locale={{ emptyText: '尚未添加服务，可先添加 OpenAI、OpenCode Go 或兼容接口' }} columns={[
+        <Table rowKey="id" loading={loading} pagination={false} dataSource={providers} scroll={{ x: 1180 }} locale={{ emptyText: '尚未添加服务，可先添加 OpenAI、OpenCode Go 或兼容接口' }} columns={[
           { title: '名称', dataIndex: 'name', render: (v, r) => <Space>{v}{r.is_default && <Tag color="blue">全局默认</Tag>}{!r.enabled && <Tag>已停用</Tag>}</Space> },
           { title: '接口', render: (_, r) => <Tag>{r.protocol === 'openai' ? (r.wire_api === 'responses' ? 'OPENAI RESPONSES' : 'OPENAI CHAT') : r.protocol.toUpperCase()}</Tag> },
           { title: '默认模型', dataIndex: 'default_model', render: v => v || '未填写' },
           { title: '地址', dataIndex: 'base_url', ellipsis: true },
           { title: '密钥', render: (_, r) => r.api_key_hint || '未配置' },
-          { title: '操作', render: (_, r) => <Space wrap><Button size="small" loading={actionId === `test-${r.id}`} onClick={async () => { setActionId(`test-${r.id}`); try { const result = await aiProviderApi.test(r.id); message.success(result.message); } catch { message.error('连接测试失败，请检查地址、密钥和模型'); } finally { setActionId(undefined); } }}>测试</Button><Button size="small" loading={actionId === `sync-${r.id}`} onClick={async () => { setActionId(`sync-${r.id}`); try { const result = await aiProviderApi.syncModels(r.id); message.success(`已同步 ${result.count} 个模型`); await load(); } catch { message.error('供应商不支持模型列表时，可在编辑中手工填写'); } finally { setActionId(undefined); } }}>同步模型</Button><Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button><Popconfirm title="确定删除这个服务？" onConfirm={async () => { await aiProviderApi.remove(r.id); await load(); }}><Button size="small" danger icon={<DeleteOutlined />}>删除</Button></Popconfirm></Space> },
+          { title: '最近测试', width: 300, render: (_, r) => renderTestRecord(r.id) },
+          { title: '操作', width: 280, render: (_, r) => <Space wrap><Button size="small" loading={testRecords[r.id]?.status === 'testing'} onClick={() => void testProvider(r.id)}>测试</Button><Button size="small" loading={actionId === `sync-${r.id}`} onClick={async () => { setActionId(`sync-${r.id}`); try { const result = await aiProviderApi.syncModels(r.id); message.success(`已同步 ${result.count} 个模型`); await load(); } catch { message.error('供应商不支持模型列表时，可在编辑中手工填写'); } finally { setActionId(undefined); } }}>同步模型</Button><Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button><Popconfirm title="确定删除这个服务？" onConfirm={() => removeProvider(r.id)}><Button size="small" danger icon={<DeleteOutlined />}>删除</Button></Popconfirm></Space> },
         ]} />
       </Card>
       <Card title="不同任务默认用哪个服务" extra={<Text type="secondary">不选择时使用全局默认/旧 API 设置</Text>}>

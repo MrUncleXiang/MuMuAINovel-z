@@ -190,6 +190,26 @@ async def test_provider_config(
         )
         content = result.get("content", "") if isinstance(result, dict) else str(result)
         return {"success": True, "message": f"连接成功，模型返回：{content[:80]}"}
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=400, detail="供应商响应超时，请稍后重试")
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        upstream_message = None
+        if response is not None:
+            try:
+                payload = response.json()
+                error = payload.get("error") if isinstance(payload, dict) else None
+                if isinstance(error, dict):
+                    upstream_message = error.get("message")
+                elif isinstance(payload, dict):
+                    upstream_message = payload.get("message") or payload.get("detail")
+            except ValueError:
+                upstream_message = None
+        status = response.status_code if response is not None else "未知"
+        detail = f"供应商返回 HTTP {status}"
+        if upstream_message:
+            detail += f"：{upstream_message}"
+        raise HTTPException(status_code=400, detail=detail)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"连接失败：{str(exc)}")
 

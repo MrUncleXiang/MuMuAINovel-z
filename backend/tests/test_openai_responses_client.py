@@ -1,6 +1,12 @@
 import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import httpx
+from fastapi import HTTPException
+
+from app.api.ai_providers import test_provider_config
 from app.services.ai_clients.openai_client import (
     OPENAI_WIRE_RESPONSES,
     OpenAIClient,
@@ -206,6 +212,47 @@ class OpenAIResponsesClientTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await chat_client.http_client.aclose()
         self.assertEqual(calls, ["/chat/completions"])
+
+
+class ProviderConnectionTestErrorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preserves_upstream_http_error_message(self):
+        response = httpx.Response(
+            503,
+            request=httpx.Request("POST", "https://provider.test/v1/responses"),
+            json={"error": {"message": "Service temporarily unavailable"}},
+        )
+
+        class FailingService:
+            async def generate_text(self, **kwargs):
+                raise httpx.HTTPStatusError("upstream error", request=response.request, response=response)
+
+        with patch("app.api.ai_providers.create_routed_ai_service", return_value=FailingService()):
+            with self.assertRaises(HTTPException) as raised:
+                await test_provider_config(
+                    "provider-id",
+                    user=SimpleNamespace(user_id="user-id"),
+                    db=object(),
+                )
+
+        self.assertEqual(
+            raised.exception.detail,
+            "供应商返回 HTTP 503：Service temporarily unavailable",
+        )
+
+    async def test_reports_provider_timeout(self):
+        class TimeoutService:
+            async def generate_text(self, **kwargs):
+                raise httpx.ReadTimeout("timed out")
+
+        with patch("app.api.ai_providers.create_routed_ai_service", return_value=TimeoutService()):
+            with self.assertRaises(HTTPException) as raised:
+                await test_provider_config(
+                    "provider-id",
+                    user=SimpleNamespace(user_id="user-id"),
+                    db=object(),
+                )
+
+        self.assertEqual(raised.exception.detail, "供应商响应超时，请稍后重试")
 
 
 if __name__ == "__main__":

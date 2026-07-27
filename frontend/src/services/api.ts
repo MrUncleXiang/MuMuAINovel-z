@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 import { message } from 'antd';
 import { ssePost } from '../utils/sseClient';
 import type { SSEClientOptions } from '../utils/sseClient';
@@ -87,6 +88,10 @@ const api = axios.create({
   withCredentials: true,
 });
 
+type ToastAwareRequestConfig = AxiosRequestConfig & {
+  suppressErrorToast?: boolean;
+};
+
 api.interceptors.request.use(
   (config) => {
     return config;
@@ -155,7 +160,10 @@ api.interceptors.response.use(
       errorMessage = error.message || '请求失败';
     }
 
-    message.error(errorMessage);
+    const requestConfig = error.config as ToastAwareRequestConfig | undefined;
+    if (!requestConfig?.suppressErrorToast) {
+      message.error(errorMessage);
+    }
     console.error('API Error:', errorMessage, error);
 
     return Promise.reject(error);
@@ -354,7 +362,11 @@ export const aiProviderApi = {
   update: (id: string, data: Partial<AIProviderConfigInput>) =>
     api.put<unknown, AIProviderConfig>(`/ai-providers/${id}`, data),
   remove: (id: string) => api.delete(`/ai-providers/${id}`),
-  test: (id: string) => api.post<unknown, { success: boolean; message: string }>(`/ai-providers/${id}/test`),
+  test: (id: string) => api.post<unknown, { success: boolean; message: string }>(
+    `/ai-providers/${id}/test`,
+    undefined,
+    { timeout: 300000, suppressErrorToast: true } as ToastAwareRequestConfig,
+  ),
   syncModels: (id: string) => api.post<unknown, { models: string[]; count: number }>(`/ai-providers/${id}/sync-models`),
   listRoutes: () => api.get<unknown, AIUsageRoute[]>('/ai-providers/routes'),
   saveRoute: (usageType: string, data: { provider_config_id?: string; model?: string }) =>
