@@ -1,14 +1,17 @@
-﻿import { useState, useEffect, useMemo } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
+﻿import { useState, useEffect, useMemo, useRef } from 'react';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, theme } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
-import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
-import type { ApiError, Character } from '../types';
+import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi } from '../services/api';
+import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import AIServiceSelector from '../components/AIServiceSelector';
+import LLMMultiSelector from '../components/LLMMultiSelector';
+import LLMCandidateCard from '../components/LLMCandidateCard';
+import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
 
 // 大纲生成请求数据类型
 interface OutlineGenerateRequestData {
@@ -118,6 +121,14 @@ export default function Outline() {
   const [manualCreateForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
+  const [outlineGenerationMode, setOutlineGenerationMode] = useState<'single' | 'compare'>('single');
+  const [outlineComparisonSelections, setOutlineComparisonSelections] = useState<LLMComparisonSelection[]>([]);
+  const [outlineComparisonBatch, setOutlineComparisonBatch] = useState<LLMComparisonBatch | null>(null);
+  const [outlineComparisonVisible, setOutlineComparisonVisible] = useState(false);
+  const [outlineComparisonBusy, setOutlineComparisonBusy] = useState(false);
+  const [outlineDiffVisible, setOutlineDiffVisible] = useState(false);
+  const [outlineDiffIds, setOutlineDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
+  const outlineComparisonPollingRef = useRef<number | null>(null);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) =>
@@ -137,6 +148,12 @@ export default function Outline() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => () => {
+    if (outlineComparisonPollingRef.current !== null) {
+      window.clearInterval(outlineComparisonPollingRef.current);
+    }
+  }, [outlineComparisonPollingRef]);
 
   // 大纲查询与分页状态
   const [outlineSearchKeyword, setOutlineSearchKeyword] = useState('');
@@ -588,6 +605,88 @@ export default function Outline() {
     }
   };
 
+  const pollOutlineComparison = (batchId: string) => {
+    if (outlineComparisonPollingRef.current !== null) window.clearInterval(outlineComparisonPollingRef.current);
+    outlineComparisonPollingRef.current = window.setInterval(async () => {
+      try {
+        const batch = await llmComparisonApi.get(batchId);
+        setOutlineComparisonBatch(batch);
+        if (!['draft', 'queued', 'running'].includes(batch.status) && outlineComparisonPollingRef.current !== null) {
+          window.clearInterval(outlineComparisonPollingRef.current);
+          outlineComparisonPollingRef.current = null;
+        }
+      } catch {
+        if (outlineComparisonPollingRef.current !== null) window.clearInterval(outlineComparisonPollingRef.current);
+        outlineComparisonPollingRef.current = null;
+      }
+    }, 2000);
+  };
+
+  const handleGenerateComparison = async (values: GenerateFormValues) => {
+    if (outlineComparisonSelections.length < 2) {
+      message.warning('请至少选择 2 个不同的 AI 服务/模型');
+      return;
+    }
+    try {
+      setOutlineComparisonBusy(true);
+      const batch = await outlineApi.createComparison({
+        project_id: currentProject.id,
+        genre: currentProject.genre || '通用',
+        theme: values.theme || currentProject.theme || '',
+        chapter_count: values.chapter_count || 5,
+        narrative_perspective: values.narrative_perspective || currentProject.narrative_perspective || '第三人称',
+        target_words: currentProject.target_words || 100000,
+        requirements: values.requirements,
+        mode: values.mode || 'auto',
+        story_direction: values.story_direction,
+        plot_stage: values.plot_stage || 'development',
+        selections: outlineComparisonSelections,
+      });
+      Modal.destroyAll();
+      setOutlineComparisonBatch(batch);
+      setOutlineComparisonVisible(true);
+      pollOutlineComparison(batch.id);
+      message.success('大纲候选生成已开始；正式大纲暂时不会改变');
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '创建大纲比较失败');
+    } finally {
+      setOutlineComparisonBusy(false);
+    }
+  };
+
+  const retryOutlineCandidate = async (candidate: LLMComparisonCandidate) => {
+    if (!outlineComparisonBatch) return;
+    try {
+      await outlineApi.retryComparisonCandidate(outlineComparisonBatch.id, candidate.id);
+      pollOutlineComparison(outlineComparisonBatch.id);
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '重试失败');
+    }
+  };
+
+  const adoptOutlineCandidate = (candidate: LLMComparisonCandidate) => {
+    if (!outlineComparisonBatch) return;
+    modalApi.confirm({
+      title: `采用 ${candidate.provider_name} · ${candidate.model} 的大纲？`,
+      content: '系统会先检查现有章节。若已有章节正文，为避免内容丢失，将阻止替换。',
+      okText: '确认采用',
+      cancelText: '暂不采用',
+      onOk: async () => {
+        try {
+          const batch = await outlineApi.adoptComparisonCandidate(outlineComparisonBatch.id, candidate.id);
+          setOutlineComparisonBatch(batch);
+          await refreshOutlines();
+          message.success('已采用为正式大纲');
+        } catch (error) {
+          const apiError = error as ApiError;
+          message.error(apiError.response?.data?.detail || '采用失败');
+        }
+      },
+    });
+  };
+
   const showGenerateModal = async () => {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
@@ -641,6 +740,17 @@ export default function Outline() {
             model: defaultModel,
           }}
         >
+          <Form.Item label="生成方式">
+            <Segmented
+              block
+              value={outlineGenerationMode}
+              options={[
+                { label: '单模型直接生成', value: 'single' },
+                { label: '多模型比较（推荐）', value: 'compare' },
+              ]}
+              onChange={value => setOutlineGenerationMode(value as 'single' | 'compare')}
+            />
+          </Form.Item>
           {hasOutlines && (
             <Form.Item
               label="生成模式"
@@ -753,7 +863,7 @@ export default function Outline() {
           </Form.Item>
 
           {/* 自定义模型选择 - 移到外层，所有模式都显示 */}
-          <Form.Item noStyle shouldUpdate>
+          {outlineGenerationMode === 'single' ? <Form.Item noStyle shouldUpdate>
             {({ getFieldValue, setFieldsValue }) => (
               <AIServiceSelector
                 usageType="outline"
@@ -761,8 +871,10 @@ export default function Outline() {
                 onChange={(selection) => setFieldsValue(selection)}
               />
             )}
-          </Form.Item>
-          {loadedModels.length > 0 && (
+          </Form.Item> : (
+            <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
+          )}
+          {outlineGenerationMode === 'single' && loadedModels.length > 0 && (
             <Form.Item
               label="AI模型"
               name="model"
@@ -792,7 +904,8 @@ export default function Outline() {
       cancelText: '取消',
       onOk: async () => {
         const values = await generateForm.validateFields();
-        await handleGenerate(values);
+        if (outlineGenerationMode === 'compare') await handleGenerateComparison(values);
+        else await handleGenerate(values);
       },
     });
   };
@@ -854,7 +967,7 @@ export default function Outline() {
           modalApi.warning({
             title: '序号冲突',
             content: (
-              <div>
+      <div>
                 <p>序号 <strong>{values.order_index}</strong> 已被使用：</p>
                 <div style={{
                   padding: 12,
@@ -2346,6 +2459,60 @@ export default function Outline() {
           </div>
         )}
       </div>
+
+      <Modal
+        title="多模型大纲候选比较"
+        open={outlineComparisonVisible}
+        onCancel={() => setOutlineComparisonVisible(false)}
+        footer={null}
+        width={isMobile ? 'calc(100vw - 24px)' : '92%'}
+      >
+        {outlineComparisonBatch ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Alert
+              showIcon
+              type={outlineComparisonBatch.status === 'failed' ? 'error' : outlineComparisonBatch.status === 'partial_failed' ? 'warning' : 'info'}
+              message={outlineComparisonBatch.status === 'adopted'
+                ? '已采用一个候选作为正式大纲。其他候选仍会保留。'
+                : ['draft', 'queued', 'running'].includes(outlineComparisonBatch.status)
+                  ? '候选正在生成，正式大纲不会变化。'
+                  : '请比较候选内容，确认后再采用。'}
+            />
+            <Button
+              disabled={outlineComparisonBatch.candidates.filter(item => item.status === 'success').length < 2}
+              onClick={() => {
+                const successful = outlineComparisonBatch.candidates.filter(item => item.status === 'success');
+                setOutlineDiffIds([successful[0]?.id, successful[1]?.id]);
+                setOutlineDiffVisible(true);
+              }}
+            >
+              比较两个候选的差异
+            </Button>
+            <Row gutter={[16, 16]}>
+              {outlineComparisonBatch.candidates.map(candidate => (
+                <Col xs={24} lg={outlineComparisonBatch.candidates.length === 2 ? 12 : 8} key={candidate.id}>
+                  <LLMCandidateCard
+                    candidate={candidate}
+                    adopted={outlineComparisonBatch.adopted_candidate_id === candidate.id}
+                    actionsDisabled={outlineComparisonBatch.status === 'adopted'}
+                    onRetry={retryOutlineCandidate}
+                    onAdopt={adoptOutlineCandidate}
+                  />
+                </Col>
+              ))}
+            </Row>
+          </Space>
+        ) : <Empty description="暂无比较结果" />}
+      </Modal>
+
+      <LLMCandidateDiffModal
+        open={outlineDiffVisible}
+        candidates={outlineComparisonBatch?.candidates || []}
+        leftId={outlineDiffIds[0]}
+        rightId={outlineDiffIds[1]}
+        onSelectionChange={(left, right) => setOutlineDiffIds([left, right])}
+        onClose={() => setOutlineDiffVisible(false)}
+      />
     </>
   );
 }

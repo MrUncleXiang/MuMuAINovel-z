@@ -3,7 +3,7 @@
   "name": "outline-multi-llm-variants",
   "title": "大纲多模型候选方案",
   "description": "同一大纲请求生成多个共存方案，支持比较和设为正式方案。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

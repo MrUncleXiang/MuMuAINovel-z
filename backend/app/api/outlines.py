@@ -1,9 +1,10 @@
 """大纲管理API"""
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, func, delete
 from typing import List, AsyncGenerator, Dict, Any
 import json
+import asyncio
 
 from app.database import get_db
 from app.api.common import verify_project_access
@@ -19,6 +20,7 @@ from app.schemas.outline import (
     OutlineResponse,
     OutlineListResponse,
     OutlineGenerateRequest,
+    OutlineComparisonCreateRequest,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -36,9 +38,46 @@ from app.services.memory_service import memory_service
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
+from app.database import get_engine
+from app.models.llm_comparison import LLMComparisonBatch
+from app.schemas.llm_comparison import LLMComparisonBatchResponse, LLMComparisonCandidateResponse
+from app.services.outline_comparison_service import (
+    apply_outline_candidate,
+    create_outline_comparison,
+    generate_outline_candidate,
+)
+from app.services.llm_comparison_service import (
+    ComparisonNotFoundError,
+    ComparisonStateError,
+    adopt_candidate,
+    get_owned_batch,
+    list_candidates,
+    retry_candidate,
+    run_batch,
+)
 
 router = APIRouter(prefix="/outlines", tags=["大纲管理"])
 logger = get_logger(__name__)
+outline_comparison_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_outline_comparison(coroutine) -> asyncio.Task:
+    task = asyncio.create_task(coroutine)
+    outline_comparison_tasks.add(task)
+    task.add_done_callback(outline_comparison_tasks.discard)
+    return task
+
+
+async def _outline_comparison_response(db: AsyncSession, batch: LLMComparisonBatch) -> LLMComparisonBatchResponse:
+    candidates = await list_candidates(db, batch.id)
+    return LLMComparisonBatchResponse(
+        id=batch.id, project_id=batch.project_id, target_type="outline", target_id=None,
+        usage_type=batch.usage_type, status=batch.status,
+        input_snapshot=batch.input_snapshot or {}, prompt_snapshot=batch.prompt_snapshot,
+        parameters_snapshot=batch.parameters_snapshot or {}, adopted_candidate_id=batch.adopted_candidate_id,
+        candidates=[LLMComparisonCandidateResponse.model_validate(item) for item in candidates],
+        created_at=batch.created_at, updated_at=batch.updated_at, completed_at=batch.completed_at,
+    )
 
 
 def _build_chapters_brief(outlines: List[Outline], max_recent: int = 20) -> str:
@@ -1793,6 +1832,79 @@ async def continue_outline_generator(
             await db.rollback()
             logger.info("大纲续写事务已回滚（异常）")
         yield await tracker.error(f"续写失败: {str(e)}")
+
+
+@router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")
+async def create_outline_comparison_batch(
+    payload: OutlineComparisonCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    project = await verify_project_access(payload.project_id, user_id, db)
+    try:
+        batch, _ = await create_outline_comparison(db, project=project, user_id=user_id, payload=payload)
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    engine = await get_engine(user_id)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    _schedule_outline_comparison(run_batch(
+        sessions, batch_id=batch.id, user_id=user_id,
+        generate=generate_outline_candidate, concurrency=2,
+    ))
+    return await _outline_comparison_response(db, batch)
+
+
+@router.post("/comparison-batches/{batch_id}/retry/{candidate_id}", response_model=LLMComparisonCandidateResponse, summary="重试大纲候选")
+async def retry_outline_candidate(
+    batch_id: str,
+    candidate_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "outline":
+            raise ComparisonNotFoundError("大纲候选批次不存在")
+        candidate = await retry_candidate(db, batch_id=batch_id, candidate_id=candidate_id, user_id=user_id)
+        engine = await get_engine(user_id)
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        _schedule_outline_comparison(run_batch(
+            sessions, batch_id=batch.id, user_id=user_id,
+            generate=generate_outline_candidate, concurrency=1,
+        ))
+        return LLMComparisonCandidateResponse.model_validate(candidate)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ComparisonStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/comparison-batches/{batch_id}/adopt/{candidate_id}", response_model=LLMComparisonBatchResponse, summary="采用大纲候选")
+async def adopt_outline_candidate(
+    batch_id: str,
+    candidate_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "outline":
+            raise ComparisonNotFoundError("大纲候选批次不存在")
+        batch, _ = await adopt_candidate(
+            db, batch_id=batch_id, candidate_id=candidate_id,
+            user_id=user_id, apply_target=apply_outline_candidate,
+        )
+        return await _outline_comparison_response(db, batch)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ComparisonStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/generate", summary="AI生成/续写大纲(后台任务)")

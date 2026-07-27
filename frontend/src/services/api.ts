@@ -571,6 +571,15 @@ export const outlineApi = {
   generateOutline: (data: GenerateOutlineRequest) =>
     api.post<unknown, { total: number; items: Outline[] }>('/outlines/generate', data).then(res => res.items),
 
+  createComparison: (data: GenerateOutlineRequest & { selections: import('../types').LLMComparisonSelection[] }) =>
+    api.post<unknown, import('../types').LLMComparisonBatch>('/outlines/comparison-batches', data),
+
+  retryComparisonCandidate: (batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonCandidate>(`/outlines/comparison-batches/${batchId}/retry/${candidateId}`),
+
+  adoptComparisonCandidate: (batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonBatch>(`/outlines/comparison-batches/${batchId}/adopt/${candidateId}`),
+
   // 获取大纲关联的章节
   getOutlineChapters: (outlineId: string) =>
     api.get<unknown, {

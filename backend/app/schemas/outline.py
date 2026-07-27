@@ -1,5 +1,5 @@
 """大纲相关的Pydantic模型"""
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -63,6 +63,22 @@ class OutlineGenerateRequest(BaseModel):
     plot_stage: str = Field("development", description="情节阶段: development(发展), climax(高潮), ending(结局)")
     keep_existing: bool = Field(False, description="是否保留现有大纲(续写时)")
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索情节设计参考）")
+
+
+class OutlineComparisonSelection(BaseModel):
+    provider_config_id: str
+    model: str = Field(..., min_length=1, max_length=150)
+
+
+class OutlineComparisonCreateRequest(OutlineGenerateRequest):
+    selections: List[OutlineComparisonSelection] = Field(..., min_length=2, max_length=4)
+
+    @model_validator(mode="after")
+    def unique_selections(self):
+        keys = {(item.provider_config_id, item.model.strip()) for item in self.selections}
+        if len(keys) != len(self.selections):
+            raise ValueError("不能重复选择同一 AI 服务和模型")
+        return self
 
 
 class ChapterOutlineGenerateRequest(BaseModel):
