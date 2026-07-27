@@ -110,3 +110,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: OpenAI Responses API 渠道支持
+
+**Date**: 2026-07-27
+**Task**: OpenAI Responses API 渠道支持
+**Branch**: `main`
+
+### Summary
+
+新增渠道级 wire_api，支持 Responses 普通、SSE 和函数工具调用；完成 PostgreSQL/SQLite 迁移、测试、备份与 19000 端口部署，vc-grok 和 hubway 均通过应用内连接测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `775c06d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
