@@ -68,3 +68,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 分析多 LLM 候选比较
+
+**Date**: 2026-07-27
+**Task**: 分析多 LLM 候选比较
+**Branch**: `main`
+
+### Summary
+
+完成无副作用分析候选、差异查看、重试和冲突检测采用；生成阶段不写正式分析及实体副作用表。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `HEAD` | (see git log) |
+
+### Status
+
+[OK] **Completed**
