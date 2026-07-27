@@ -22,6 +22,7 @@ class ResolvedAISelection:
     provider_config_id: Optional[str]
     provider_name: str
     protocol: str
+    wire_api: str
     api_key: str
     base_url: str
     model: str
@@ -98,6 +99,7 @@ async def resolve_ai_selection(
             provider_config_id=selected.id,
             provider_name=selected.name,
             protocol=selected.protocol,
+            wire_api=selected.wire_api,
             api_key=selected.api_key,
             base_url=selected.base_url,
             model=resolved_model,
@@ -121,6 +123,7 @@ async def resolve_ai_selection(
         provider_config_id=None,
         provider_name="旧版默认配置",
         protocol=protocol,
+        wire_api="chat_completions",
         api_key=(legacy.api_key if legacy else None) or env_key or "",
         base_url=(legacy.api_base_url if legacy else None) or env_base_url,
         model=model or (legacy.llm_model if legacy else None) or app_settings.default_model,
@@ -161,6 +164,7 @@ async def create_routed_ai_service(
         api_provider=protocol_to_runtime_provider(selected.protocol),
         api_key=selected.api_key,
         api_base_url=selected.base_url,
+        openai_wire_api=selected.wire_api,
         model_name=selected.model,
         temperature=(legacy.temperature if legacy else None) or app_settings.default_temperature,
         max_tokens=(legacy.max_tokens if legacy else None) or app_settings.default_max_tokens,

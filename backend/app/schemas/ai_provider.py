@@ -6,11 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 SUPPORTED_PROTOCOLS = {"openai", "anthropic", "gemini"}
+SUPPORTED_WIRE_APIS = {"chat_completions", "responses"}
 
 
 class AIProviderConfigBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     protocol: str = Field(default="openai")
+    wire_api: str = Field(default="chat_completions")
     base_url: str = Field(..., min_length=1, max_length=500)
     api_key: Optional[str] = Field(default=None, max_length=1000)
     default_model: Optional[str] = Field(default=None, max_length=150)
@@ -26,6 +28,14 @@ class AIProviderConfigBase(BaseModel):
         normalized = value.strip().lower()
         if normalized not in SUPPORTED_PROTOCOLS:
             raise ValueError("protocol 必须是 openai、anthropic 或 gemini")
+        return normalized
+
+    @field_validator("wire_api")
+    @classmethod
+    def validate_wire_api(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_WIRE_APIS:
+            raise ValueError("wire_api 必须是 chat_completions 或 responses")
         return normalized
 
     @field_validator("models")
@@ -46,6 +56,7 @@ class AIProviderConfigCreate(AIProviderConfigBase):
 class AIProviderConfigUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     protocol: Optional[str] = None
+    wire_api: Optional[str] = None
     base_url: Optional[str] = Field(default=None, min_length=1, max_length=500)
     api_key: Optional[str] = Field(default=None, max_length=1000)
     default_model: Optional[str] = Field(default=None, max_length=150)
@@ -65,6 +76,16 @@ class AIProviderConfigUpdate(BaseModel):
             raise ValueError("protocol 必须是 openai、anthropic 或 gemini")
         return normalized
 
+    @field_validator("wire_api")
+    @classmethod
+    def validate_wire_api(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_WIRE_APIS:
+            raise ValueError("wire_api 必须是 chat_completions 或 responses")
+        return normalized
+
 
 class AIProviderConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -72,6 +93,7 @@ class AIProviderConfigResponse(BaseModel):
     id: str
     name: str
     protocol: str
+    wire_api: str
     base_url: str
     api_key_configured: bool
     api_key_hint: Optional[str] = None
@@ -103,6 +125,7 @@ class AISelectionResponse(BaseModel):
     provider_config_id: Optional[str] = None
     provider_name: str
     protocol: str
+    wire_api: str
     model: str
 
 

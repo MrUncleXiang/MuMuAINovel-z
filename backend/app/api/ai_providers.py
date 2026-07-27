@@ -38,6 +38,7 @@ def _provider_response(row: AIProviderConfig) -> AIProviderConfigResponse:
         id=row.id,
         name=row.name,
         protocol=row.protocol,
+        wire_api=row.wire_api,
         base_url=row.base_url,
         api_key_configured=bool(key),
         api_key_hint=hint,
@@ -81,10 +82,13 @@ async def create_provider_config(
     db: AsyncSession = Depends(get_db),
 ):
     base_url = validate_public_http_url(data.base_url).rstrip("/")
+    values = data.model_dump(exclude={"models"})
+    if data.protocol != "openai":
+        values["wire_api"] = "chat_completions"
     row = AIProviderConfig(
         id=str(uuid.uuid4()),
         user_id=user.user_id,
-        **{**data.model_dump(exclude={"models"}), "model_catalog": data.models, "base_url": base_url},
+        **{**values, "model_catalog": data.models, "base_url": base_url},
     )
     if data.is_default:
         await _clear_other_defaults(db, user.user_id, row.id)
@@ -120,6 +124,9 @@ async def update_provider_config(
     # 前端编辑时不传 api_key 表示保留旧值；传空字符串表示清除。
     if values.get("api_key") is None:
         values.pop("api_key", None)
+    final_protocol = values.get("protocol", row.protocol)
+    if final_protocol != "openai":
+        values["wire_api"] = "chat_completions"
     for key, value in values.items():
         setattr(row, key, value)
     if values.get("is_default"):
@@ -310,6 +317,7 @@ async def get_resolved_selection(
         provider_config_id=selected.provider_config_id,
         provider_name=selected.provider_name,
         protocol=selected.protocol,
+        wire_api=selected.wire_api,
         model=selected.model,
     )
 

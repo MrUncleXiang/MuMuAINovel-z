@@ -15,6 +15,7 @@ class AIProviderConfig(Base):
     user_id = Column(String(100), nullable=False, index=True)
     name = Column(String(100), nullable=False, comment="用户可识别的配置名称")
     protocol = Column(String(20), nullable=False, default="openai", comment="openai/anthropic/gemini")
+    wire_api = Column(String(30), nullable=False, default="chat_completions", comment="chat_completions/responses")
     base_url = Column(String(500), nullable=False)
     api_key = Column(String(1000), nullable=True)
     default_model = Column(String(150), nullable=True)

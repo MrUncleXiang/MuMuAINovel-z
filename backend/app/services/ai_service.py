@@ -85,6 +85,7 @@ class AIService:
         api_provider: Optional[str] = None,
         api_key: Optional[str] = None,
         api_base_url: Optional[str] = None,
+        openai_wire_api: str = "chat_completions",
         default_model: Optional[str] = None,
         default_temperature: Optional[float] = None,
         default_max_tokens: Optional[int] = None,
@@ -137,7 +138,12 @@ class AIService:
             openai_base_url = app_settings.openai_base_url
 
         if openai_key:
-            client = OpenAIClient(openai_key, openai_base_url or "https://api.openai.com/v1", self.config)
+            client = OpenAIClient(
+                openai_key,
+                openai_base_url or "https://api.openai.com/v1",
+                self.config,
+                wire_api=openai_wire_api,
+            )
             self._openai_provider = OpenAIProvider(client)
         
         # 初始化 Anthropic
@@ -776,6 +782,7 @@ def create_user_ai_service_with_mcp(
     max_tokens: int,
     user_id: str,
     db_session,
+    openai_wire_api: str = "chat_completions",
     system_prompt: Optional[str] = None,
     enable_mcp: bool = True,
     usage_type: str = "default",
@@ -807,6 +814,7 @@ def create_user_ai_service_with_mcp(
         api_provider=api_provider,
         api_key=api_key,
         api_base_url=api_base_url,
+        openai_wire_api=openai_wire_api,
         default_model=model_name,
         default_temperature=temperature,
         default_max_tokens=max_tokens,

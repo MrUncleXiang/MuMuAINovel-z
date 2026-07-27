@@ -11,11 +11,11 @@ const TASKS = [
   ['world_building', '世界观生成'],
 ] as const;
 
-const PRESETS: Record<string, Pick<ProviderForm, 'protocol' | 'base_url' | 'default_model' | 'models'>> = {
-  openai: { protocol: 'openai', base_url: 'https://api.openai.com/v1', default_model: 'gpt-4.1-mini', models: 'gpt-4.1-mini\ngpt-4.1' },
-  opencode: { protocol: 'openai', base_url: 'https://opencode.ai/zen/go/v1', default_model: '', models: '' },
-  anthropic: { protocol: 'anthropic', base_url: 'https://api.anthropic.com', default_model: 'claude-sonnet-4-20250514', models: 'claude-sonnet-4-20250514' },
-  gemini: { protocol: 'gemini', base_url: 'https://generativelanguage.googleapis.com/v1beta', default_model: 'gemini-2.5-flash', models: 'gemini-2.5-flash' },
+const PRESETS: Record<string, Pick<ProviderForm, 'protocol' | 'wire_api' | 'base_url' | 'default_model' | 'models'>> = {
+  openai: { protocol: 'openai', wire_api: 'chat_completions', base_url: 'https://api.openai.com/v1', default_model: 'gpt-4.1-mini', models: 'gpt-4.1-mini\ngpt-4.1' },
+  opencode: { protocol: 'openai', wire_api: 'chat_completions', base_url: 'https://opencode.ai/zen/go/v1', default_model: '', models: '' },
+  anthropic: { protocol: 'anthropic', wire_api: 'chat_completions', base_url: 'https://api.anthropic.com', default_model: 'claude-sonnet-4-20250514', models: 'claude-sonnet-4-20250514' },
+  gemini: { protocol: 'gemini', wire_api: 'chat_completions', base_url: 'https://generativelanguage.googleapis.com/v1beta', default_model: 'gemini-2.5-flash', models: 'gemini-2.5-flash' },
 };
 
 type ProviderForm = Omit<AIProviderConfigInput, 'models'> & { models?: string };
@@ -28,6 +28,7 @@ export default function AIProviderManagement() {
   const [open, setOpen] = useState(false);
   const [actionId, setActionId] = useState<string>();
   const [form] = Form.useForm<ProviderForm>();
+  const selectedProtocol = Form.useWatch('protocol', form);
 
   const load = async () => {
     setLoading(true);
@@ -42,7 +43,7 @@ export default function AIProviderManagement() {
   const routeMap = useMemo(() => new Map(routes.map(item => [item.usage_type, item])), [routes]);
   const openCreate = () => {
     setEditing(null); form.resetFields();
-    form.setFieldsValue({ protocol: 'openai', enabled: true, is_default: providers.length === 0, sort_order: 0 });
+    form.setFieldsValue({ protocol: 'openai', wire_api: 'chat_completions', enabled: true, is_default: providers.length === 0, sort_order: 0 });
     setOpen(true);
   };
   const openEdit = (row: AIProviderConfig) => {
@@ -80,7 +81,7 @@ export default function AIProviderManagement() {
       <Card title="已添加的服务">
         <Table rowKey="id" loading={loading} pagination={false} dataSource={providers} locale={{ emptyText: '尚未添加服务，可先添加 OpenAI、OpenCode Go 或兼容接口' }} columns={[
           { title: '名称', dataIndex: 'name', render: (v, r) => <Space>{v}{r.is_default && <Tag color="blue">全局默认</Tag>}{!r.enabled && <Tag>已停用</Tag>}</Space> },
-          { title: '协议', dataIndex: 'protocol', render: v => <Tag>{String(v).toUpperCase()}</Tag> },
+          { title: '接口', render: (_, r) => <Tag>{r.protocol === 'openai' ? (r.wire_api === 'responses' ? 'OPENAI RESPONSES' : 'OPENAI CHAT') : r.protocol.toUpperCase()}</Tag> },
           { title: '默认模型', dataIndex: 'default_model', render: v => v || '未填写' },
           { title: '地址', dataIndex: 'base_url', ellipsis: true },
           { title: '密钥', render: (_, r) => r.api_key_hint || '未配置' },
@@ -104,6 +105,7 @@ export default function AIProviderManagement() {
       <Space wrap style={{ marginBottom: 16 }}><Text>快速模板：</Text><Button size="small" onClick={() => applyPreset('openai')}>OpenAI</Button><Button size="small" onClick={() => applyPreset('opencode')}>OpenCode Go</Button><Button size="small" onClick={() => applyPreset('anthropic')}>Anthropic</Button><Button size="small" onClick={() => applyPreset('gemini')}>Gemini</Button></Space>
       <Form form={form} layout="vertical">
         <Row gutter={16}><Col span={12}><Form.Item name="name" label="服务名称" rules={[{ required: true }]}><Input placeholder="例如：我的 OpenCode Go" /></Form.Item></Col><Col span={12}><Form.Item name="protocol" label="接口协议" rules={[{ required: true }]}><Select options={[{value:'openai',label:'OpenAI 兼容'},{value:'anthropic',label:'Anthropic'},{value:'gemini',label:'Gemini'}]} /></Form.Item></Col></Row>
+        {selectedProtocol === 'openai' && <Form.Item name="wire_api" label="OpenAI 接口类型" rules={[{ required: true }]}><Select options={[{ value: 'chat_completions', label: 'Chat Completions（/chat/completions）' }, { value: 'responses', label: 'Responses（/responses）' }]} /></Form.Item>}
         <Form.Item name="base_url" label="接口地址（Base URL）" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://.../v1" /></Form.Item>
         <Form.Item name="api_key" label={editing ? `API Key（留空则保留原密钥：${editing.api_key_hint || '未配置'}）` : 'API Key'}><Input.Password autoComplete="new-password" /></Form.Item>
         <Row gutter={16}><Col span={12}><Form.Item name="default_model" label="默认模型"><Input placeholder="模型 ID" /></Form.Item></Col><Col span={12}><Form.Item name="sort_order" label="排序"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>

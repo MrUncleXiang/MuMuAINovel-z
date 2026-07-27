@@ -360,7 +360,7 @@ export const aiProviderApi = {
   saveRoute: (usageType: string, data: { provider_config_id?: string; model?: string }) =>
     api.put<unknown, AIUsageRoute>(`/ai-providers/routes/${usageType}`, data),
   resolve: (usageType: string, params?: { provider_config_id?: string; model?: string }) =>
-    api.get<unknown, { source: string; usage_type: string; provider_config_id?: string; provider_name: string; protocol: string; model: string }>(`/ai-providers/selection/${usageType}`, { params }),
+    api.get<unknown, { source: string; usage_type: string; provider_config_id?: string; provider_name: string; protocol: string; wire_api: string; model: string }>(`/ai-providers/selection/${usageType}`, { params }),
   logs: (params?: { project_id?: string; usage_type?: string; provider_config_id?: string; model?: string; status?: string; limit?: number; offset?: number }) =>
     api.get<unknown, { items: AICallLog[]; total: number }>('/ai-providers/logs', { params }),
   summary: (projectId?: string) =>

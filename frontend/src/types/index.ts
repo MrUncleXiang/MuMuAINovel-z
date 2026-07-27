@@ -138,6 +138,7 @@ export interface AIProviderConfig {
   id: string;
   name: string;
   protocol: 'openai' | 'anthropic' | 'gemini';
+  wire_api: 'chat_completions' | 'responses';
   base_url: string;
   api_key_configured: boolean;
   api_key_hint?: string;
@@ -154,6 +155,7 @@ export interface AIProviderConfig {
 export interface AIProviderConfigInput {
   name: string;
   protocol: 'openai' | 'anthropic' | 'gemini';
+  wire_api?: 'chat_completions' | 'responses';
   base_url: string;
   api_key?: string;
   default_model?: string;
