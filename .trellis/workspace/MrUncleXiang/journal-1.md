@@ -47,3 +47,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 大纲多 LLM 候选比较
+
+**Date**: 2026-07-27
+**Task**: 大纲多 LLM 候选比较
+**Branch**: `main`
+
+### Summary
+
+完成大纲同输入候选、比较重试和安全采用；有正文的下游章节会阻止替换正式大纲。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `HEAD` | (see git log) |
+
+### Status
+
+[OK] **Completed**
