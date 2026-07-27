@@ -1,0 +1,31 @@
+{
+  "id": "multi-llm-variant-comparison",
+  "name": "multi-llm-variant-comparison",
+  "title": "多 LLM 同条件候选版本比较",
+  "description": "同一大纲、章节或分析在相同输入快照下由多个 LLM 生成候选，结果共存并可比较、采用。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "MrUncleXiang",
+  "assignee": "MrUncleXiang",
+  "createdAt": "2026-07-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-27-variant-comparison-foundation",
+    "07-27-chapter-multi-llm-variants",
+    "07-27-outline-multi-llm-variants",
+    "07-27-analysis-multi-llm-variants"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
