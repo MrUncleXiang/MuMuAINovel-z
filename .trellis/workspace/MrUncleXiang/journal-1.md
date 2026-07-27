@@ -89,3 +89,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 多 LLM 候选比较整体交付
+
+**Date**: 2026-07-27
+**Task**: 多 LLM 候选比较整体交付
+**Branch**: `main`
+
+### Summary
+
+四个子任务完成；前后端与迁移检查通过，已备份 PostgreSQL、迁移到 d8f1b620，并将 19000 切换至 comparison-e383ad3 镜像，健康检查正常。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e383ad3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
