@@ -22,7 +22,8 @@ from app.models import (
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,
-    BackgroundTask, Announcement, AIProviderConfig, AIUsageRoute, AICallLog
+    BackgroundTask, Announcement, AIProviderConfig, AIUsageRoute, AICallLog,
+    LLMComparisonBatch, LLMComparisonCandidate
 )
 
 # 引擎缓存：每个用户一个引擎

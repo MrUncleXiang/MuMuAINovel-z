@@ -66,6 +66,9 @@ import type {
   BatchAnalyzeUnanalyzedResponse,
   AIProviderConfig,
   AIProviderConfigInput,
+  LLMComparisonBatch,
+  LLMComparisonBatchCreate,
+  LLMComparisonCandidate,
   AIUsageRoute,
   AICallLog,
 } from '../types';
@@ -362,6 +365,18 @@ export const aiProviderApi = {
     api.get<unknown, { items: AICallLog[]; total: number }>('/ai-providers/logs', { params }),
   summary: (projectId?: string) =>
     api.get<unknown, { total_calls: number; success_calls: number; failed_calls: number; total_tokens: number; average_duration_ms?: number }>('/ai-providers/logs/summary', { params: projectId ? { project_id: projectId } : undefined }),
+};
+
+export const llmComparisonApi = {
+  create: (data: LLMComparisonBatchCreate) =>
+    api.post<unknown, LLMComparisonBatch>('/llm-comparisons', data),
+  list: (params?: { project_id?: string; target_type?: string; target_id?: string; limit?: number; offset?: number }) =>
+    api.get<unknown, { items: LLMComparisonBatch[]; total: number }>('/llm-comparisons', { params }),
+  get: (batchId: string) =>
+    api.get<unknown, LLMComparisonBatch>(`/llm-comparisons/${batchId}`),
+  retry: (batchId: string, candidateId: string) =>
+    api.post<unknown, LLMComparisonCandidate>(`/llm-comparisons/${batchId}/candidates/${candidateId}/retry`),
+  remove: (batchId: string) => api.delete(`/llm-comparisons/${batchId}`),
 };
 
 export const projectApi = {

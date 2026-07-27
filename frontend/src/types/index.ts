@@ -195,6 +195,66 @@ export interface AICallLog {
   created_at: string;
 }
 
+export type LLMComparisonTargetType = 'chapter' | 'outline' | 'analysis';
+export type LLMComparisonBatchStatus = 'draft' | 'queued' | 'running' | 'completed' | 'partial_failed' | 'failed' | 'adopted';
+export type LLMComparisonCandidateStatus = 'pending' | 'running' | 'success' | 'failed';
+
+export interface LLMComparisonSelection {
+  provider_config_id: string;
+  model: string;
+}
+
+export interface LLMComparisonCandidate {
+  id: string;
+  provider_config_id?: string;
+  provider_name: string;
+  protocol: 'openai' | 'anthropic' | 'gemini';
+  model: string;
+  status: LLMComparisonCandidateStatus;
+  attempt_count: number;
+  output_text?: string;
+  output_data?: unknown;
+  error_type?: string;
+  error_message?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  duration_ms?: number;
+  ai_call_log_id?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  adopted_at?: string;
+}
+
+export interface LLMComparisonBatch {
+  id: string;
+  project_id: string;
+  target_type: LLMComparisonTargetType;
+  target_id?: string;
+  usage_type: string;
+  status: LLMComparisonBatchStatus;
+  input_snapshot: Record<string, unknown>;
+  prompt_snapshot: string;
+  parameters_snapshot: Record<string, unknown>;
+  adopted_candidate_id?: string;
+  candidates: LLMComparisonCandidate[];
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface LLMComparisonBatchCreate {
+  project_id: string;
+  target_type: LLMComparisonTargetType;
+  target_id?: string;
+  usage_type: string;
+  input_snapshot: Record<string, unknown>;
+  prompt_snapshot: string;
+  parameters_snapshot?: Record<string, unknown>;
+  selections: LLMComparisonSelection[];
+}
+
 export interface PresetUpdateRequest {
   name?: string;
   description?: string;

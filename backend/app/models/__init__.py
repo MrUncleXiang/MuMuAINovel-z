@@ -22,6 +22,7 @@ from app.models.background_task import BackgroundTask
 from app.models.announcement import Announcement
 from app.models.ai_provider_config import AIProviderConfig, AIUsageRoute
 from app.models.ai_call_log import AICallLog
+from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
 
 __all__ = [
     "Project",
@@ -55,5 +56,7 @@ __all__ = [
     "Announcement",
     "AIProviderConfig",
     "AIUsageRoute",
-    "AICallLog"
+    "AICallLog",
+    "LLMComparisonBatch",
+    "LLMComparisonCandidate"
 ]
