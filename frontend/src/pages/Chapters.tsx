@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, theme } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
-import { projectApi, writingStyleApi, chapterApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
+import LLMMultiSelector from '../components/LLMMultiSelector';
+import LLMCandidateCard from '../components/LLMCandidateCard';
+import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
+import { projectApi, writingStyleApi, chapterApi, llmComparisonApi } from '../services/api';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -66,6 +69,14 @@ export default function Chapters() {
   const [availableModels, setAvailableModels] = useState<Array<{ value: string, label: string }>>([]);
   const [selectedModel, setSelectedModel] = useState<string | undefined>();
   const [aiServiceSelection, setAIServiceSelection] = useState<AIServiceSelection>({});
+  const [generationMode, setGenerationMode] = useState<'single' | 'compare'>('single');
+  const [comparisonSelections, setComparisonSelections] = useState<LLMComparisonSelection[]>([]);
+  const [comparisonBatch, setComparisonBatch] = useState<LLMComparisonBatch | null>(null);
+  const [comparisonVisible, setComparisonVisible] = useState(false);
+  const [comparisonBusy, setComparisonBusy] = useState(false);
+  const comparisonPollingRef = useRef<number | null>(null);
+  const [candidateDiffVisible, setCandidateDiffVisible] = useState(false);
+  const [candidateDiffIds, setCandidateDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
   const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
@@ -844,10 +855,16 @@ export default function Chapters() {
       setEditingId(id);
       setTemporaryNarrativePerspective(undefined); // 重置人称选择
       setSelectedSkillKey(undefined); // 重置Skill选择
+      setComparisonBatch(null);
+      setComparisonSelections([]);
+      stopComparisonPolling();
       setIsEditorOpen(true);
       // 打开编辑窗口时加载模型列表和Skill列表
       loadAvailableModels();
       loadAvailableSkills();
+      llmComparisonApi.list({ project_id: chapter.project_id, target_type: 'chapter', target_id: chapter.id, limit: 1 })
+        .then(result => setComparisonBatch(result.items[0] || null))
+        .catch(() => setComparisonBatch(null));
     }
   };
 
@@ -1073,6 +1090,133 @@ export default function Chapters() {
     } catch {
       message.error("创建后台任务失败");
     }
+  };
+
+  const stopComparisonPolling = () => {
+    if (comparisonPollingRef.current !== null) {
+      window.clearInterval(comparisonPollingRef.current);
+      comparisonPollingRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopComparisonPolling(), []);
+
+  const pollComparisonBatch = (batchId: string) => {
+    stopComparisonPolling();
+    comparisonPollingRef.current = window.setInterval(async () => {
+      try {
+        const batch = await llmComparisonApi.get(batchId);
+        setComparisonBatch(batch);
+        if (!['draft', 'queued', 'running'].includes(batch.status)) {
+          stopComparisonPolling();
+        }
+      } catch {
+        stopComparisonPolling();
+      }
+    }, 2000);
+  };
+
+  const handleCreateComparison = async () => {
+    if (!editingId || comparisonSelections.length < 2) {
+      message.warning('请至少选择 2 个不同的 AI 服务/模型');
+      return;
+    }
+    if (!selectedStyleId) {
+      message.warning('请先选择写作风格');
+      return;
+    }
+    try {
+      setComparisonBusy(true);
+      const batch = await chapterApi.createComparison(editingId, {
+        selections: comparisonSelections,
+        style_id: selectedStyleId,
+        target_word_count: targetWordCount,
+        narrative_perspective: temporaryNarrativePerspective,
+        skill_key: selectedSkillKey,
+        enable_mcp: true,
+      });
+      setComparisonBatch(batch);
+      setComparisonVisible(true);
+      pollComparisonBatch(batch.id);
+      message.success('多模型比较任务已开始；正式章节暂时不会改变');
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '创建比较任务失败');
+    } finally {
+      setComparisonBusy(false);
+    }
+  };
+
+  const handleRetryCandidate = async (candidate: LLMComparisonCandidate) => {
+    if (!editingId || !comparisonBatch) return;
+    try {
+      await chapterApi.retryComparisonCandidate(editingId, comparisonBatch.id, candidate.id);
+      const refreshed = await llmComparisonApi.get(comparisonBatch.id);
+      setComparisonBatch(refreshed);
+      pollComparisonBatch(comparisonBatch.id);
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '重试失败');
+    }
+  };
+
+  const handleAdoptCandidate = (candidate: LLMComparisonCandidate) => {
+    if (!editingId || !comparisonBatch) return;
+    modal.confirm({
+      title: `采用 ${candidate.provider_name} · ${candidate.model} 的版本？`,
+      content: '采用后才会覆盖正式章节。其他候选结果仍会保留，方便以后查看。',
+      okText: '确认采用',
+      cancelText: '暂不采用',
+      onOk: async () => {
+        try {
+          const batch = await chapterApi.adoptComparisonCandidate(editingId, comparisonBatch.id, candidate.id);
+          setComparisonBatch(batch);
+          editorForm.setFieldsValue({ content: candidate.output_text || '' });
+          await refreshChapters();
+          if (currentProject) {
+            setCurrentProject(await projectApi.getProject(currentProject.id));
+          }
+          message.success('已采用为正式章节');
+        } catch (error) {
+          const apiError = error as ApiError;
+          message.error(apiError.response?.data?.detail || '采用失败');
+        }
+      },
+    });
+  };
+
+  const openCandidateEditor = (candidate: LLMComparisonCandidate) => {
+    if (!editingId || !comparisonBatch) return;
+    let text = candidate.output_text || '';
+    modal.confirm({
+      title: `编辑候选：${candidate.provider_name} · ${candidate.model}`,
+      width: 800,
+      content: <Input.TextArea defaultValue={text} rows={18} onChange={event => { text = event.target.value; }} />,
+      okText: '保存候选',
+      cancelText: '取消',
+      onOk: async () => {
+        const updated = await chapterApi.editComparisonCandidate(editingId, comparisonBatch.id, candidate.id, text);
+        setComparisonBatch(current => current ? {
+          ...current,
+          candidates: current.candidates.map(item => item.id === updated.id ? updated : item),
+        } : current);
+      },
+    });
+  };
+
+  const copyCandidate = async (candidate: LLMComparisonCandidate) => {
+    await navigator.clipboard.writeText(candidate.output_text || '');
+    message.success('候选正文已复制');
+  };
+
+  const openCandidateDiff = () => {
+    const successful = comparisonBatch?.candidates.filter(item => item.status === 'success') || [];
+    if (successful.length < 2) {
+      message.info('至少需要两个生成成功的候选才能查看差异');
+      return;
+    }
+    setCandidateDiffIds([successful[0].id, successful[1].id]);
+    setCandidateDiffVisible(true);
   };
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -2700,15 +2844,35 @@ export default function Chapters() {
           </div>
 
           {/* 第二行：目标字数 + AI模型 + Skill */}
-          <AIServiceSelector
-            usageType="chapter_write"
-            value={{ ...aiServiceSelection, model: selectedModel }}
-            onChange={(selection) => {
-              setAIServiceSelection(selection);
-              setSelectedModel(selection.model);
-            }}
-            disabled={isGenerating}
-          />
+          <Form.Item label="生成方式" style={{ marginBottom: 12 }}>
+            <Segmented
+              block
+              value={generationMode}
+              options={[
+                { label: '单模型直接写入', value: 'single' },
+                { label: '多模型比较（推荐）', value: 'compare' },
+              ]}
+              onChange={value => setGenerationMode(value as 'single' | 'compare')}
+              disabled={isGenerating || comparisonBusy}
+            />
+          </Form.Item>
+          {generationMode === 'single' ? (
+            <AIServiceSelector
+              usageType="chapter_write"
+              value={{ ...aiServiceSelection, model: selectedModel }}
+              onChange={(selection) => {
+                setAIServiceSelection(selection);
+                setSelectedModel(selection.model);
+              }}
+              disabled={isGenerating}
+            />
+          ) : (
+            <LLMMultiSelector
+              value={comparisonSelections}
+              onChange={setComparisonSelections}
+              disabled={isGenerating || comparisonBusy}
+            />
+          )}
           <div style={{
             display: isMobile ? 'block' : 'flex',
             gap: isMobile ? 0 : 16,
@@ -2801,6 +2965,30 @@ export default function Chapters() {
               disabled={isGenerating}
             />
           </Form.Item>
+
+          {generationMode === 'compare' && (
+            <Card size="small" style={{ marginBottom: 16 }}>
+              <Space wrap>
+                <Button
+                  type="primary"
+                  icon={<ThunderboltOutlined />}
+                  loading={comparisonBusy}
+                  disabled={comparisonSelections.length < 2 || !editingId}
+                  onClick={handleCreateComparison}
+                >
+                  生成 {comparisonSelections.length || ''} 个候选版本
+                </Button>
+                {comparisonBatch && (
+                  <Button onClick={() => setComparisonVisible(true)}>
+                    查看最近比较结果
+                  </Button>
+                )}
+                <span style={{ color: token.colorTextSecondary }}>
+                  生成期间不会覆盖上面的正式章节内容
+                </span>
+              </Space>
+            </Card>
+          )}
 
           {/* 局部重写浮动工具栏 */}
           <div data-partial-regenerate-toolbar>
@@ -3130,6 +3318,62 @@ export default function Chapters() {
         loading={isGenerating}
         progress={singleChapterProgress}
         message={singleChapterProgressMessage}
+      />
+
+      <Modal
+        title="多模型章节候选比较"
+        open={comparisonVisible}
+        onCancel={() => setComparisonVisible(false)}
+        footer={null}
+        width={isMobile ? 'calc(100vw - 24px)' : '92%'}
+        destroyOnHidden={false}
+      >
+        {comparisonBatch ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Alert
+              showIcon
+              type={comparisonBatch.status === 'partial_failed' ? 'warning' : comparisonBatch.status === 'failed' ? 'error' : 'info'}
+              message={comparisonBatch.status === 'adopted'
+                ? '已采用一个候选作为正式章节；其他结果仍保留。'
+                : ['draft', 'queued', 'running'].includes(comparisonBatch.status)
+                  ? '正在生成候选。此时正式章节不会发生变化。'
+                  : '候选已生成，请比较后再选择是否采用。'}
+            />
+            <Button onClick={openCandidateDiff} disabled={comparisonBatch.candidates.filter(item => item.status === 'success').length < 2}>
+              比较两个候选的差异
+            </Button>
+            <Row gutter={[16, 16]}>
+              {comparisonBatch.candidates.map(candidate => (
+                <Col xs={24} lg={comparisonBatch.candidates.length === 2 ? 12 : 8} key={candidate.id}>
+                  <LLMCandidateCard
+                    candidate={candidate}
+                    adopted={comparisonBatch.adopted_candidate_id === candidate.id}
+                    actionsDisabled={comparisonBatch.status === 'adopted'}
+                    onRetry={handleRetryCandidate}
+                    onAdopt={handleAdoptCandidate}
+                  />
+                  {candidate.status === 'success' && (
+                    <Space style={{ marginTop: 8 }}>
+                      <Button size="small" onClick={() => copyCandidate(candidate)}>复制正文</Button>
+                      {!comparisonBatch.adopted_candidate_id && (
+                        <Button size="small" onClick={() => openCandidateEditor(candidate)}>编辑候选</Button>
+                      )}
+                    </Space>
+                  )}
+                </Col>
+              ))}
+            </Row>
+          </Space>
+        ) : <Empty description="暂无比较结果" />}
+      </Modal>
+
+      <LLMCandidateDiffModal
+        open={candidateDiffVisible}
+        candidates={comparisonBatch?.candidates || []}
+        leftId={candidateDiffIds[0]}
+        rightId={candidateDiffIds[1]}
+        onSelectionChange={(left, right) => setCandidateDiffIds([left, right])}
+        onClose={() => setCandidateDiffVisible(false)}
       />
 
       {/* 章节阅读器 */}

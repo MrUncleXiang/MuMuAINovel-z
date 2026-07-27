@@ -1,5 +1,5 @@
 """章节相关的Pydantic模型"""
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -131,6 +131,36 @@ class ChapterGenerateRequest(BaseModel):
     provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+
+
+class ChapterComparisonSelection(BaseModel):
+    provider_config_id: str = Field(..., description="AI 服务配置ID")
+    model: str = Field(..., min_length=1, max_length=150, description="模型名称")
+
+
+class ChapterComparisonCreateRequest(BaseModel):
+    """使用同一份章节输入创建 2～4 个候选版本。"""
+    selections: List[ChapterComparisonSelection] = Field(..., min_length=2, max_length=4)
+    style_id: Optional[int] = None
+    target_word_count: int = Field(3000, ge=500, le=10000)
+    enable_mcp: bool = True
+    narrative_perspective: Optional[str] = None
+    skill_key: Optional[str] = None
+
+    @classmethod
+    def _selection_key(cls, item: ChapterComparisonSelection) -> tuple[str, str]:
+        return item.provider_config_id, item.model.strip()
+
+    @model_validator(mode="after")
+    def validate_unique_selections(self):
+        keys = {self._selection_key(item) for item in self.selections}
+        if len(keys) != len(self.selections):
+            raise ValueError("不能重复选择同一 AI 服务和模型")
+        return self
+
+
+class ChapterCandidateEditRequest(BaseModel):
+    output_text: str = Field(..., min_length=1, description="编辑后的候选正文")
 
 
 class BatchGenerateRequest(BaseModel):

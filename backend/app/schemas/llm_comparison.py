@@ -43,7 +43,10 @@ class LLMComparisonBatchCreate(BaseModel):
     @field_validator("parameters_snapshot")
     @classmethod
     def safe_generation_parameters(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        allowed = {"temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty"}
+        allowed = {
+            "temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty",
+            "system_prompt", "tool_choice", "auto_mcp",
+        }
         unknown = set(values) - allowed
         if unknown:
             raise ValueError(f"不支持的生成参数：{', '.join(sorted(unknown))}")

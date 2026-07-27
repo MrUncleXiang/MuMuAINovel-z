@@ -759,6 +759,24 @@ export const chapterApi = {
   checkCanGenerate: (chapterId: string) =>
     api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
 
+  createComparison: (chapterId: string, data: {
+    selections: import('../types').LLMComparisonSelection[];
+    style_id?: number;
+    target_word_count: number;
+    enable_mcp?: boolean;
+    narrative_perspective?: string;
+    skill_key?: string;
+  }) => api.post<unknown, import('../types').LLMComparisonBatch>(`/chapters/${chapterId}/comparison-batches`, data),
+
+  retryComparisonCandidate: (chapterId: string, batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonCandidate>(`/chapters/${chapterId}/comparison-batches/${batchId}/retry/${candidateId}`),
+
+  adoptComparisonCandidate: (chapterId: string, batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonBatch>(`/chapters/${chapterId}/comparison-batches/${batchId}/adopt/${candidateId}`),
+
+  editComparisonCandidate: (chapterId: string, batchId: string, candidateId: string, outputText: string) =>
+    api.put<unknown, import('../types').LLMComparisonCandidate>(`/chapters/${chapterId}/comparison-batches/${batchId}/candidates/${candidateId}`, { output_text: outputText }),
+
   getBatchAnalysisStatuses: (projectId: string, chapterIds?: string[]) =>
     api.post<unknown, BatchAnalysisStatusResponse>(`/chapters/project/${projectId}/analysis/statuses`, {
       chapter_ids: chapterIds && chapterIds.length > 0 ? chapterIds : undefined,

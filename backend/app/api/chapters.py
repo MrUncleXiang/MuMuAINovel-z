@@ -40,6 +40,8 @@ from app.schemas.chapter import (
     BatchAnalyzeUnanalyzedResponse,
     ChapterAnalysisRequest,
     ChapterGenerateRequest,
+    ChapterComparisonCreateRequest,
+    ChapterCandidateEditRequest,
     BatchGenerateRequest,
     BatchGenerateResponse,
     BatchGenerateStatusResponse,
@@ -60,6 +62,23 @@ from app.services.chapter_regenerator import ChapterRegenerator
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.services.ai_provider_service import create_routed_ai_service
+from app.models.llm_comparison import LLMComparisonBatch
+from app.models.llm_comparison import LLMComparisonCandidate
+from app.schemas.llm_comparison import LLMComparisonBatchResponse, LLMComparisonCandidateResponse
+from app.services.chapter_comparison_service import (
+    apply_chapter_candidate,
+    create_chapter_comparison,
+    generate_chapter_candidate,
+)
+from app.services.llm_comparison_service import (
+    ComparisonNotFoundError,
+    ComparisonStateError,
+    adopt_candidate,
+    get_owned_batch,
+    list_candidates,
+    retry_candidate,
+    run_batch,
+)
 from app.utils.sse_response import SSEResponse, create_sse_response
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
@@ -68,6 +87,7 @@ logger = get_logger(__name__)
 # 全局数据库写入锁（每个用户一个锁，用于保护SQLite写入操作）
 db_write_locks: dict[str, Lock] = {}
 analysis_background_tasks: set[asyncio.Task] = set()
+comparison_background_tasks: set[asyncio.Task] = set()
 
 ANALYSIS_TASK_TIMEOUT_SECONDS = 600
 ANALYSIS_TASK_STALE_SECONDS = 720
@@ -79,6 +99,34 @@ def _schedule_analysis_background(coroutine) -> asyncio.Task:
     analysis_background_tasks.add(task)
     task.add_done_callback(analysis_background_tasks.discard)
     return task
+
+
+def _schedule_comparison_background(coroutine) -> asyncio.Task:
+    """持有多模型生成任务引用，避免请求结束后被回收。"""
+    task = asyncio.create_task(coroutine)
+    comparison_background_tasks.add(task)
+    task.add_done_callback(comparison_background_tasks.discard)
+    return task
+
+
+async def _chapter_comparison_response(db: AsyncSession, batch: LLMComparisonBatch) -> LLMComparisonBatchResponse:
+    candidates = await list_candidates(db, batch.id)
+    return LLMComparisonBatchResponse(
+        id=batch.id,
+        project_id=batch.project_id,
+        target_type="chapter",
+        target_id=batch.target_id,
+        usage_type=batch.usage_type,
+        status=batch.status,
+        input_snapshot=batch.input_snapshot or {},
+        prompt_snapshot=batch.prompt_snapshot,
+        parameters_snapshot=batch.parameters_snapshot or {},
+        adopted_candidate_id=batch.adopted_candidate_id,
+        candidates=[LLMComparisonCandidateResponse.model_validate(item) for item in candidates],
+        created_at=batch.created_at,
+        updated_at=batch.updated_at,
+        completed_at=batch.completed_at,
+    )
 
 
 def _build_lightweight_chapter_summary(content: str, max_length: int = 300) -> str:
@@ -1428,6 +1476,129 @@ async def _analyze_chapter_background_impl(
     finally:
         if db_session:
             await db_session.close()
+
+
+@router.post("/{chapter_id}/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建章节多模型候选")
+async def create_chapter_comparison_batch(
+    chapter_id: str,
+    payload: ChapterComparisonCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    chapter = await db.scalar(select(Chapter).where(Chapter.id == chapter_id))
+    if chapter is None:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    await verify_project_access(chapter.project_id, user_id, db)
+    can_generate, error_msg, _ = await check_prerequisites(db, chapter)
+    if not can_generate:
+        raise HTTPException(status_code=400, detail=error_msg)
+    analysis_ready, analysis_msg = await check_previous_analysis_ready(db, chapter)
+    if not analysis_ready:
+        raise HTTPException(status_code=409, detail=analysis_msg)
+    try:
+        batch, _ = await create_chapter_comparison(db, chapter=chapter, user_id=user_id, request=payload)
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    _schedule_comparison_background(run_batch(
+        session_factory,
+        batch_id=batch.id,
+        user_id=user_id,
+        generate=generate_chapter_candidate,
+        concurrency=2,
+    ))
+    return await _chapter_comparison_response(db, batch)
+
+
+@router.post("/{chapter_id}/comparison-batches/{batch_id}/retry/{candidate_id}", response_model=LLMComparisonCandidateResponse, summary="重试章节候选")
+async def retry_chapter_comparison_candidate(
+    chapter_id: str,
+    batch_id: str,
+    candidate_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "chapter" or batch.target_id != chapter_id:
+            raise ComparisonNotFoundError("章节候选批次不存在")
+        candidate = await retry_candidate(db, batch_id=batch_id, candidate_id=candidate_id, user_id=user_id)
+        engine = await get_engine(user_id)
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        _schedule_comparison_background(run_batch(
+            session_factory, batch_id=batch.id, user_id=user_id,
+            generate=generate_chapter_candidate, concurrency=1,
+        ))
+        return LLMComparisonCandidateResponse.model_validate(candidate)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ComparisonStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/{chapter_id}/comparison-batches/{batch_id}/adopt/{candidate_id}", response_model=LLMComparisonBatchResponse, summary="采用章节候选")
+async def adopt_chapter_comparison_candidate(
+    chapter_id: str,
+    batch_id: str,
+    candidate_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "chapter" or batch.target_id != chapter_id:
+            raise ComparisonNotFoundError("章节候选批次不存在")
+        batch, _ = await adopt_candidate(
+            db, batch_id=batch_id, candidate_id=candidate_id,
+            user_id=user_id, apply_target=apply_chapter_candidate,
+        )
+        return await _chapter_comparison_response(db, batch)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ComparisonStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.put("/{chapter_id}/comparison-batches/{batch_id}/candidates/{candidate_id}", response_model=LLMComparisonCandidateResponse, summary="编辑章节候选")
+async def edit_chapter_comparison_candidate(
+    chapter_id: str,
+    batch_id: str,
+    candidate_id: str,
+    payload: ChapterCandidateEditRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id, lock=True)
+        if batch.target_type != "chapter" or batch.target_id != chapter_id:
+            raise ComparisonNotFoundError("章节候选批次不存在")
+        if batch.adopted_candidate_id:
+            raise ComparisonStateError("该批次已有正式采用结果，不能再编辑")
+        candidate = await db.scalar(select(LLMComparisonCandidate).where(
+            LLMComparisonCandidate.id == candidate_id,
+            LLMComparisonCandidate.batch_id == batch.id,
+        ).with_for_update())
+        if candidate is None:
+            raise ComparisonNotFoundError("候选结果不存在")
+        if candidate.status != "success":
+            raise ComparisonStateError("只能编辑生成成功的候选结果")
+        candidate.output_text = payload.output_text
+        await db.commit()
+        await db.refresh(candidate)
+        return LLMComparisonCandidateResponse.model_validate(candidate)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ComparisonStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/{chapter_id}/generate-stream", summary="AI创作章节内容（流式）")

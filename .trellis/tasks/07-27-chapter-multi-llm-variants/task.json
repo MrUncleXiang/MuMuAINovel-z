@@ -3,7 +3,7 @@
   "name": "chapter-multi-llm-variants",
   "title": "章节多模型候选版本",
   "description": "同一章节用多个 LLM 生成并保留候选，支持对照和采用。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
