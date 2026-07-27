@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button, theme } from 'antd';
+import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button, Segmented, Space, theme } from 'antd';
 import {
   ThunderboltOutlined,
   BulbOutlined,
@@ -13,10 +13,14 @@ import {
   ReloadOutlined,
   EditOutlined
 } from '@ant-design/icons';
-import type { AnalysisTask, ChapterAnalysisResponse } from '../types';
+import type { AnalysisTask, ChapterAnalysisResponse, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import ChapterRegenerationModal from './ChapterRegenerationModal';
 import ChapterContentComparison from './ChapterContentComparison';
 import AIServiceSelector, { type AIServiceSelection } from './AIServiceSelector';
+import LLMMultiSelector from './LLMMultiSelector';
+import LLMCandidateCard from './LLMCandidateCard';
+import LLMCandidateDiffModal from './LLMCandidateDiffModal';
+import { chapterApi, llmComparisonApi } from '../services/api';
 
 // 判断是否为移动设备
 const isMobileDevice = () => window.innerWidth < 768;
@@ -40,6 +44,13 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
   const [newGeneratedContent, setNewGeneratedContent] = useState('');
   const [newContentWordCount, setNewContentWordCount] = useState(0);
   const [aiSelection, setAISelection] = useState<AIServiceSelection>({});
+  const [analysisMode, setAnalysisMode] = useState<'single' | 'compare'>('single');
+  const [analysisSelections, setAnalysisSelections] = useState<LLMComparisonSelection[]>([]);
+  const [analysisBatch, setAnalysisBatch] = useState<LLMComparisonBatch | null>(null);
+  const [analysisCompareVisible, setAnalysisCompareVisible] = useState(false);
+  const [analysisDiffVisible, setAnalysisDiffVisible] = useState(false);
+  const [analysisDiffIds, setAnalysisDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
+  const analysisCompareTimerRef = useRef<number | null>(null);
   const pollTimerRef = useRef<number | null>(null);
   const requestGenerationRef = useRef(0);
 
@@ -238,6 +249,49 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     } finally {
       setLoading(false);
     }
+  };
+
+  const pollAnalysisComparison = (batchId: string) => {
+    if (analysisCompareTimerRef.current !== null) window.clearInterval(analysisCompareTimerRef.current);
+    analysisCompareTimerRef.current = window.setInterval(async () => {
+      const batch = await llmComparisonApi.get(batchId);
+      setAnalysisBatch(batch);
+      if (!['draft', 'queued', 'running'].includes(batch.status) && analysisCompareTimerRef.current !== null) {
+        window.clearInterval(analysisCompareTimerRef.current);
+        analysisCompareTimerRef.current = null;
+      }
+    }, 2000);
+  };
+
+  const triggerAnalysisComparison = async () => {
+    if (analysisSelections.length < 2) {
+      setError('请至少选择 2 个 AI 服务/模型');
+      return;
+    }
+    try {
+      setLoading(true);
+      const batch = await chapterApi.createAnalysisComparison(chapterId, analysisSelections);
+      setAnalysisBatch(batch);
+      setAnalysisCompareVisible(true);
+      pollAnalysisComparison(batch.id);
+    } catch (err) {
+      setError((err as Error).message || '创建比较失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retryAnalysisCandidate = async (candidate: LLMComparisonCandidate) => {
+    if (!analysisBatch) return;
+    await chapterApi.retryAnalysisCandidate(chapterId, analysisBatch.id, candidate.id);
+    pollAnalysisComparison(analysisBatch.id);
+  };
+
+  const adoptAnalysisCandidate = async (candidate: LLMComparisonCandidate) => {
+    if (!analysisBatch) return;
+    const batch = await chapterApi.adoptAnalysisCandidate(chapterId, analysisBatch.id, candidate.id);
+    setAnalysisBatch(batch);
+    await fetchAnalysisResult();
   };
 
 
@@ -785,7 +839,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             key="analyze"
             type="primary"
             icon={<ReloadOutlined />}
-            onClick={triggerAnalysis}
+            onClick={analysisMode === 'compare' ? triggerAnalysisComparison : triggerAnalysis}
             loading={loading}
             size={isMobile ? 'small' : 'middle'}
           >
@@ -797,7 +851,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             key="reanalyze"
             type="primary"
             icon={<ReloadOutlined />}
-            onClick={triggerAnalysis}
+            onClick={analysisMode === 'compare' ? triggerAnalysisComparison : triggerAnalysis}
             loading={loading}
             danger
             size={isMobile ? 'small' : 'middle'}
@@ -810,7 +864,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             key="reanalyze"
             type="default"
             icon={<ReloadOutlined />}
-            onClick={triggerAnalysis}
+            onClick={analysisMode === 'compare' ? triggerAnalysisComparison : triggerAnalysis}
             loading={loading}
             size={isMobile ? 'small' : 'middle'}
           >
@@ -821,7 +875,13 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     >
       {(!task || task.status === 'failed' || task.status === 'completed') && !loading && (
         <Card size="small" title="本次分析使用的 AI" style={{ marginBottom: 16 }}>
-          <AIServiceSelector usageType="chapter_analysis" value={aiSelection} onChange={setAISelection} />
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Segmented block value={analysisMode} options={[{ label: '单模型直接分析', value: 'single' }, { label: '多模型比较（推荐）', value: 'compare' }]} onChange={value => setAnalysisMode(value as 'single' | 'compare')} />
+            {analysisMode === 'single'
+              ? <AIServiceSelector usageType="chapter_analysis" value={aiSelection} onChange={setAISelection} />
+              : <LLMMultiSelector value={analysisSelections} onChange={setAnalysisSelections} />}
+            {analysisBatch && <Button onClick={() => setAnalysisCompareVisible(true)}>查看最近的分析比较</Button>}
+          </Space>
         </Card>
       )}
       {loading && !task && (
@@ -905,6 +965,20 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           }}
         />
       )}
+
+      <Modal title="多模型分析候选比较" open={analysisCompareVisible} onCancel={() => setAnalysisCompareVisible(false)} footer={null} width="92%">
+        {analysisBatch ? <Space direction="vertical" style={{ width: '100%' }}>
+          <Alert showIcon type="info" message={analysisBatch.status === 'adopted' ? '已采用一个分析结果。' : '候选分析仅作预览，采用前不会修改记忆、角色、关系、组织或伏笔。'} />
+          <Button disabled={analysisBatch.candidates.filter(item => item.status === 'success').length < 2} onClick={() => {
+            const successful = analysisBatch.candidates.filter(item => item.status === 'success');
+            setAnalysisDiffIds([successful[0]?.id, successful[1]?.id]); setAnalysisDiffVisible(true);
+          }}>比较两个分析的差异</Button>
+          <Row gutter={[16, 16]}>{analysisBatch.candidates.map(candidate => <Col xs={24} lg={analysisBatch.candidates.length === 2 ? 12 : 8} key={candidate.id}>
+            <LLMCandidateCard candidate={candidate} adopted={analysisBatch.adopted_candidate_id === candidate.id} actionsDisabled={analysisBatch.status === 'adopted'} onRetry={retryAnalysisCandidate} onAdopt={adoptAnalysisCandidate} />
+          </Col>)}</Row>
+        </Space> : <Empty />}
+      </Modal>
+      <LLMCandidateDiffModal open={analysisDiffVisible} candidates={analysisBatch?.candidates || []} leftId={analysisDiffIds[0]} rightId={analysisDiffIds[1]} onSelectionChange={(left, right) => setAnalysisDiffIds([left, right])} onClose={() => setAnalysisDiffVisible(false)} />
     </Modal>
   );
 }

@@ -163,6 +163,16 @@ class ChapterCandidateEditRequest(BaseModel):
     output_text: str = Field(..., min_length=1, description="编辑后的候选正文")
 
 
+class AnalysisComparisonCreateRequest(BaseModel):
+    selections: List[ChapterComparisonSelection] = Field(..., min_length=2, max_length=4)
+
+    @model_validator(mode="after")
+    def unique_selections(self):
+        if len({(item.provider_config_id, item.model.strip()) for item in self.selections}) != len(self.selections):
+            raise ValueError("不能重复选择同一 AI 服务和模型")
+        return self
+
+
 class BatchGenerateRequest(BaseModel):
     """批量生成章节的请求模型"""
     start_chapter_number: int = Field(..., description="起始章节序号")

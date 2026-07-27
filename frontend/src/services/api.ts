@@ -786,6 +786,13 @@ export const chapterApi = {
   editComparisonCandidate: (chapterId: string, batchId: string, candidateId: string, outputText: string) =>
     api.put<unknown, import('../types').LLMComparisonCandidate>(`/chapters/${chapterId}/comparison-batches/${batchId}/candidates/${candidateId}`, { output_text: outputText }),
 
+  createAnalysisComparison: (chapterId: string, selections: import('../types').LLMComparisonSelection[]) =>
+    api.post<unknown, import('../types').LLMComparisonBatch>(`/chapters/${chapterId}/analysis-comparison-batches`, { selections }),
+  retryAnalysisCandidate: (chapterId: string, batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonCandidate>(`/chapters/${chapterId}/analysis-comparison-batches/${batchId}/retry/${candidateId}`),
+  adoptAnalysisCandidate: (chapterId: string, batchId: string, candidateId: string) =>
+    api.post<unknown, import('../types').LLMComparisonBatch>(`/chapters/${chapterId}/analysis-comparison-batches/${batchId}/adopt/${candidateId}`),
+
   getBatchAnalysisStatuses: (projectId: string, chapterIds?: string[]) =>
     api.post<unknown, BatchAnalysisStatusResponse>(`/chapters/project/${projectId}/analysis/statuses`, {
       chapter_ids: chapterIds && chapterIds.length > 0 ? chapterIds : undefined,
