@@ -120,7 +120,7 @@ async def _chapter_comparison_response(db: AsyncSession, batch: LLMComparisonBat
     return LLMComparisonBatchResponse(
         id=batch.id,
         project_id=batch.project_id,
-        target_type="chapter",
+        target_type=batch.target_type,
         target_id=batch.target_id,
         usage_type=batch.usage_type,
         status=batch.status,
