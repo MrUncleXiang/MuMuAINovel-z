@@ -1,21 +1,62 @@
-<!-- TRELLIS:START -->
-# Trellis Instructions
+<!-- RUDDER:START -->
+# Rudder Instructions
 
 These instructions are for AI assistants working in this project.
 
-This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+This project is managed by Rudder. The working knowledge you need lives under `.rudder/`:
 
-- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
-- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
-- `.trellis/workspace/` — per-developer journals and session traces
-- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+- `.rudder/workflow.md` — development phases, when to create tasks, skill routing
+- `.rudder/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.rudder/workspace/` — per-developer journals and session traces
+- `.rudder/tasks/` — active and archived tasks (PRDs, research, jsonl context)
 
-If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+If a Rudder command is available on your platform (e.g. `/rudder:finish-work`, `/rudder:continue`), prefer it over manual steps. Not every platform exposes every command.
 
 If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
-- `.agents/skills/` — reusable Trellis skills
+- `.agents/skills/` — reusable Rudder skills
 - `.codex/agents/` — optional custom subagents
 
-Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+Managed by Rudder. Edits outside this block are preserved; edits inside may be overwritten by a future `rudder update`.
 
-<!-- TRELLIS:END -->
+<!-- RUDDER:END -->
+
+<!-- MATT-SKILLS:START -->
+# 工作流分工约定（Wayfinder / Grilling × Rudder）
+
+本项目同时配备两套工具，按下面的规则路由，不要混用：
+
+- **Matt Pocock 技能包**（规划/澄清层）：`/wayfinder`（大项目导航）、`/grilling`（追问澄清）、`/research`、`/prototype` 等，装在 `~/.agents/skills/`
+- **Rudder**（执行/记忆层）：任务、spec、workspace 记忆，命令形如 `python3 ./.rudder/scripts/task.py create`，hooks 自动注入上下文
+
+## 什么时候用什么
+
+1. **超级大项目 / 路线模糊**（跨多个会话、一次想不清楚怎么走）→ 先用 `/wayfinder` 画决策地图，走完地图再开工。
+2. **单个功能需求模糊** → 用 Rudder 自带的 brainstorm（等价于 grilling 的一问一答），产出 `prd.md` 后再进入 implement。
+3. **需求已清楚的日常开发** → 直接走 Rudder 标准流程：建任务 → implement → check。
+
+## wayfinder 与 Rudder 的衔接
+
+wayfinder 地图走完后：
+
+- 每张已解决的决策票 → 用 `python3 ./.rudder/scripts/task.py create "<票名>"` 建成 Rudder 任务，让 Rudder 接管后续记忆与执行。
+- 地图产生的规格/设计结论 → 落盘到 `.rudder/spec/` 对应位置，不要只留在聊天记录里。
+
+## 硬规则
+
+- 需求未澄清前不要直接动手写代码（除非用户明确要求）。
+- 不要为单个小改动启动 wayfinder；wayfinder 只用于跨会话的大项目。
+<!-- MATT-SKILLS:END -->
+
+## Agent skills
+
+### Issue tracker
+
+问题/规格（PRD）以 markdown 文件存放在 `.scratch/<功能名>/` 下，不用 GitHub Issues。参见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个分类角色，标签串与角色同名：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。参见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文布局：仓库根目录一个 `CONTEXT.md` + `docs/adr/`。参见 `docs/agents/domain.md`。
