@@ -184,7 +184,7 @@ from app.api import (
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
     project_covers, tasks, skills, announcements, ai_providers, llm_comparisons,
-    pipelines
+    pipelines, theme_templates
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -216,6 +216,7 @@ app.include_router(announcements.router, prefix="/api")  # 公告API
 app.include_router(ai_providers.router, prefix="/api")  # 多 LLM 服务与调用记录
 app.include_router(llm_comparisons.router, prefix="/api")  # 同输入的多 LLM 候选比较
 app.include_router(pipelines.router, prefix="/api")  # 自动化小说生产流水线
+app.include_router(theme_templates.router, prefix="/api")  # 题材模板库
 
 static_dir = Path(__file__).parent.parent / "static"
 generated_assets_root_dir = Path(__file__).parent.parent / "storage"

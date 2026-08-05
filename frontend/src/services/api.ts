@@ -73,6 +73,7 @@ import type {
   NovelPipeline,
   PipelineCheckpoint,
   PipelineStartRequest,
+  ThemeTemplate,
   AIUsageRoute,
   AICallLog,
 } from '../types';
@@ -412,6 +413,16 @@ export const pipelineApi = {
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/config`, config),
   checkpointRollback: (id: string, checkpointId: string, mode = 'content') =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/rollback?mode=${mode}`),
+};
+
+export const themeTemplateApi = {
+  list: () => api.get<unknown, ThemeTemplate[]>('/theme-templates'),
+  analyze: (data: { examples: string[]; genre_hint?: string }) =>
+    api.post<unknown, ThemeTemplate>('/theme-templates/analyze', data),
+  create: (data: Partial<ThemeTemplate>) =>
+    api.post<unknown, ThemeTemplate>('/theme-templates', data),
+  remove: (id: string) => api.delete(`/theme-templates/${id}`),
+  use: (id: string) => api.post<unknown, ThemeTemplate>(`/theme-templates/${id}/use`),
 };
 
 export const projectApi = {

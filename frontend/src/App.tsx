@@ -14,6 +14,7 @@ import Chapters from './pages/Chapters';
 import ChapterReader from './pages/ChapterReader';
 import ChapterAnalysis from './pages/ChapterAnalysis';
 import PipelinePanel from './pages/PipelinePanel';
+import ThemeTemplates from './pages/ThemeTemplates';
 import Foreshadows from './pages/Foreshadows';
 import WritingStyles from './pages/WritingStyles';
 import PromptWorkshop from './pages/PromptWorkshop';
@@ -53,6 +54,7 @@ function App() {
           <Route path="/wizard" element={<ProtectedRoute><ProjectWizardNew /></ProtectedRoute>} />
           <Route path="/inspiration" element={<ProtectedRoute><Inspiration /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+          <Route path="/theme-templates" element={<ProtectedRoute><ThemeTemplates /></ProtectedRoute>} />
           <Route path="/prompt-templates" element={<ProtectedRoute><><PromptTemplates /><AppFooter /></></ProtectedRoute>} />
           <Route path="/mcp-plugins" element={<ProtectedRoute><MCPPlugins /></ProtectedRoute>} />
           <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />

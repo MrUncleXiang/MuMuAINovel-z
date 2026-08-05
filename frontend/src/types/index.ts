@@ -1409,3 +1409,20 @@ export interface PipelineStartRequest {
   project_id: string;
   config?: Record<string, any>;
 }
+
+// ============ 题材模板库 ============
+export interface ThemeTemplate {
+  id: string;
+  title: string;
+  genre?: string;
+  tags: string[];
+  description?: string;
+  world_formula?: string;
+  character_prototypes: Array<Record<string, any>>;
+  volume_structure?: string;
+  source: string;
+  source_refs: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}

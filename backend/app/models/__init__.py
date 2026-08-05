@@ -24,6 +24,7 @@ from app.models.ai_provider_config import AIProviderConfig, AIUsageRoute
 from app.models.ai_call_log import AICallLog
 from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
 from app.models.novel_pipeline import NovelPipeline, PipelineCheckpoint
+from app.models.theme_template import ThemeTemplate
 
 __all__ = [
     "Project",
@@ -62,4 +63,5 @@ __all__ = [
     "LLMComparisonCandidate",
     "NovelPipeline",
     "PipelineCheckpoint",
+    "ThemeTemplate",
 ]
