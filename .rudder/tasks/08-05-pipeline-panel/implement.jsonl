@@ -1,1 +1,5 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .rudder/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "frontend/src/pages/PipelinePanel.tsx", "reason": "流水线驾驶舱页面"}
+{"file": "frontend/src/services/api.ts", "reason": "pipelineApi"}
+{"file": "frontend/src/App.tsx", "reason": "路由"}
+{"file": "frontend/src/pages/ProjectDetail.tsx", "reason": "侧边栏入口"}

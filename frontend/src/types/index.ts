@@ -1367,3 +1367,45 @@ export const PROMPT_CATEGORIES: Record<string, string> = {
   game: '游戏/电竞',
   other: '其他',
 };
+
+// ============ 自动化小说流水线 ============
+export type PipelineStatus = 'idle' | 'running' | 'awaiting_review' | 'paused' | 'completed' | 'stopped' | 'failed';
+export type PipelineStage = 'idle' | 'book' | 'chapter_loop' | 'checkpoint' | 'volume_transition' | 'completed';
+export type CheckpointType = 'every_n' | 'volume_end' | 'milestone' | 'manual';
+
+export interface PipelineCheckpoint {
+  id: string;
+  checkpoint_type: CheckpointType;
+  trigger_chapter_number: number;
+  chapter_from?: number;
+  chapter_to?: number;
+  status: 'pending' | 'approved' | 'rollback' | 'stopped';
+  decision?: 'continue' | 'rollback' | 'stop';
+  rollback_to_checkpoint_id?: string;
+  decided_at?: string;
+  created_at: string;
+}
+
+export interface NovelPipeline {
+  id: string;
+  project_id: string;
+  status: PipelineStatus;
+  current_stage: PipelineStage;
+  current_outline_id?: string;
+  chapter_count: number;
+  current_checkpoint_id?: string;
+  config_snapshot: Record<string, any>;
+  progress_json: Record<string, any>;
+  checkpoint_history: Array<Record<string, any>>;
+  budget_used_tokens: number;
+  budget_used_amount_cents: number;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+  current_checkpoint?: PipelineCheckpoint;
+}
+
+export interface PipelineStartRequest {
+  project_id: string;
+  config?: Record<string, any>;
+}

@@ -22,6 +22,7 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   HistoryOutlined,
+  RocketOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -118,6 +119,11 @@ export default function ProjectDetail() {
 
   const menuItems = [
     {
+      key: 'pipeline',
+      icon: <RocketOutlined />,
+      label: <Link to={`/project/${projectId}/pipeline`}>流水线</Link>,
+    },
+    {
       key: 'sponsor',
       icon: <HeartOutlined />,
       label: <Link to={`/project/${projectId}/sponsor`}>赞助支持</Link>,
@@ -207,6 +213,11 @@ export default function ProjectDetail() {
   ];
 
   const menuItemsCollapsed = [
+    {
+      key: 'pipeline',
+      icon: <RocketOutlined />,
+      label: <Link to={`/project/${projectId}/pipeline`}>流水线</Link>,
+    },
     {
       key: 'sponsor',
       icon: <HeartOutlined />,

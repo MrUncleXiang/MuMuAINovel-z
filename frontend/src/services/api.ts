@@ -70,6 +70,9 @@ import type {
   LLMComparisonBatch,
   LLMComparisonBatchCreate,
   LLMComparisonCandidate,
+  NovelPipeline,
+  PipelineCheckpoint,
+  PipelineStartRequest,
   AIUsageRoute,
   AICallLog,
 } from '../types';
@@ -389,6 +392,24 @@ export const llmComparisonApi = {
   retry: (batchId: string, candidateId: string) =>
     api.post<unknown, LLMComparisonCandidate>(`/llm-comparisons/${batchId}/candidates/${candidateId}/retry`),
   remove: (batchId: string) => api.delete(`/llm-comparisons/${batchId}`),
+};
+
+export const pipelineApi = {
+  start: (data: PipelineStartRequest) =>
+    api.post<unknown, NovelPipeline>('/pipelines/start', data),
+  list: (params?: { project_id?: string }) =>
+    api.get<unknown, { items: NovelPipeline[]; total: number }>('/pipelines', { params }),
+  get: (id: string) =>
+    api.get<unknown, NovelPipeline>(`/pipelines/${id}`),
+  pause: (id: string) => api.post<unknown, NovelPipeline>(`/pipelines/${id}/pause`),
+  resume: (id: string) => api.post<unknown, NovelPipeline>(`/pipelines/${id}/resume`),
+  stop: (id: string) => api.post<unknown, NovelPipeline>(`/pipelines/${id}/stop`),
+  checkpoints: (id: string) =>
+    api.get<unknown, PipelineCheckpoint[]>(`/pipelines/${id}/checkpoints`),
+  checkpointContinue: (id: string, checkpointId: string) =>
+    api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/continue`),
+  checkpointRollback: (id: string, checkpointId: string, mode = 'content') =>
+    api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/rollback?mode=${mode}`),
 };
 
 export const projectApi = {

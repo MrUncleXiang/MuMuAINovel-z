@@ -13,6 +13,7 @@ import Organizations from './pages/Organizations';
 import Chapters from './pages/Chapters';
 import ChapterReader from './pages/ChapterReader';
 import ChapterAnalysis from './pages/ChapterAnalysis';
+import PipelinePanel from './pages/PipelinePanel';
 import Foreshadows from './pages/Foreshadows';
 import WritingStyles from './pages/WritingStyles';
 import PromptWorkshop from './pages/PromptWorkshop';
@@ -73,6 +74,7 @@ function App() {
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
             <Route path="ai-usage" element={<AIUsageLogs />} />
+            <Route path="pipeline" element={<PipelinePanel />} />
             <Route path="sponsor" element={<Sponsor />} />
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>
