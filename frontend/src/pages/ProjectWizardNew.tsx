@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form, Input, InputNumber, Select, Button, Card,
-  Row, Col, Typography, Space, message, Radio, theme
+  Row, Col, Typography, Space, message, Radio, theme, Divider
 } from 'antd';
 import {
   RocketOutlined, ArrowLeftOutlined, CheckCircleOutlined
 } from '@ant-design/icons';
 import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
-import type { WizardBasicInfo } from '../types';
+import { themeTemplateApi } from '../services/api';
+import type { ThemeTemplate, WizardBasicInfo } from '../types';
 
 const { TextArea } = Input;
 const { Title, Paragraph } = Typography;
@@ -126,6 +127,7 @@ export default function ProjectWizardNew() {
           outline_mode: 'one-to-one', // 默认为传统模式（1-1）
         }}
       >
+        <TemplatePicker form={form} />
         <Form.Item
           label="书名"
           name="title"
@@ -385,5 +387,46 @@ export default function ProjectWizardNew() {
         )}
       </div>
     </div>
+  );
+}
+
+// 题材模板选择器：选模板自动预填表单（一键开书入口）
+function TemplatePicker({ form }: { form: any }) {
+  const [templates, setTemplates] = useState<ThemeTemplate[]>([]);
+
+  useEffect(() => {
+    themeTemplateApi.list().then(setTemplates).catch(() => undefined);
+  }, []);
+
+  const applyTemplate = (id: string) => {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    form.setFieldsValue({
+      title: t.title,
+      genre: t.genre ? [t.genre] : form.getFieldValue('genre'),
+      description: t.description || '',
+      theme: [t.world_formula, t.volume_structure].filter(Boolean).join('\n') || t.description || '',
+    });
+    message.success(`已套用模板「${t.title}」，可继续修改`);
+  };
+
+  if (templates.length === 0) return null;
+  return (
+    <>
+      <Divider style={{ margin: '12px 0' }} />
+      <Form.Item label="🎯 从题材模板一键开书（可选）" name="template_id">
+        <Select
+          allowClear
+          placeholder="选择一个热门题材模板，自动填好下面的信息"
+          size="large"
+          onChange={applyTemplate}
+          options={templates.map((t) => ({
+            value: t.id,
+            label: `${t.title}${t.usage_count ? `（已用 ${t.usage_count} 次）` : ''}`,
+          }))}
+        />
+      </Form.Item>
+      <Divider style={{ margin: '12px 0' }} />
+    </>
   );
 }
