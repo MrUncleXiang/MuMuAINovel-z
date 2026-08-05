@@ -19,7 +19,7 @@ from typing import Any, Optional
 import json
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_engine
@@ -277,10 +277,8 @@ async def rollback_to_checkpoint(
     """检查点审阅：回滚。删除目标检查点之后的所有章节（纯删除，蓝图决策），然后自动重写。
 
     mode="content"：只回退章节正文（默认）。
-    mode="content+outline"：同时回退大纲（细化实现在 rollback 任务）。
+    mode="content+outline"：同时重置受影响的大纲（骨架保留，卷过渡时重新规划）。
     """
-    from sqlalchemy import delete
-
     pipeline = await get_pipeline(db, pipeline_id, user_id)
     target = await get_checkpoint(db, user_id=user_id, pipeline_id=pipeline_id, checkpoint_id=target_checkpoint_id)
     if mode not in {"content", "content+outline"}:
@@ -301,14 +299,17 @@ async def rollback_to_checkpoint(
         chapter.status = ChapterStatus.DRAFT
         chapter.updated_at = datetime.now()
 
-    # 2) content+outline：额外重置目标检查点之后创建的大纲（细粒度实现留待 rollback 任务）
+    # 2) content+outline：重置受影响大纲的内容/结构（骨架保留，卷过渡时重新规划）
     if mode == "content+outline":
-        await db.execute(
-            delete(Outline).where(
-                Outline.project_id == pipeline.project_id,
-                Outline.created_at > target.created_at,
-            )
-        )
+        affected_outline_ids = [c.outline_id for c in affected if c.outline_id]
+        if affected_outline_ids:
+            outlines_to_reset = list((await db.scalars(
+                select(Outline).where(Outline.id.in_(affected_outline_ids))
+            )).all())
+            for outline in outlines_to_reset:
+                outline.content = ""
+                outline.structure = ""
+                outline.updated_at = datetime.now()
 
     # 3) 记录当前挂起检查点的决策为 rollback
     if pipeline.current_checkpoint_id:
@@ -694,6 +695,13 @@ async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id:
     params = (cfg.get("params") or {}).get("volume_transition") or {}
     volume_chapters = int((cfg.get("volume_chapters") or 10))
 
+    # 若当前卷存在但内容/结构为空（content+outline 回滚后），先重新规划它
+    if pipeline.current_outline_id:
+        current_outline = await db.get(Outline, pipeline.current_outline_id)
+        if current_outline is not None and not (current_outline.structure or "").strip():
+            await _regenerate_volume(db, pipeline, user_id, current_outline, volume_chapters)
+            return
+
     # 已有大纲（作为续写上下文）
     outlines = list((await db.scalars(
         select(Outline).where(Outline.project_id == pipeline.project_id).order_by(Outline.order_index)
@@ -807,4 +815,134 @@ async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id:
         ))
     await db.flush()
     pipeline.current_outline_id = new_outline.id
+    pipeline.current_stage = PipelineStage.CHAPTER_LOOP
+
+
+async def _regenerate_volume(
+    db: AsyncSession,
+    pipeline: NovelPipeline,
+    user_id: str,
+    outline: Outline,
+    volume_chapters: int,
+) -> None:
+    """重新规划一个空的卷 Outline（content+outline 回滚后调用）：AI 生成 → 更新大纲 + 重建章节骨架。"""
+    from app.api.outlines import _build_outline_continue_context
+    from app.models.character import Character
+    from app.services.prompt_service import PromptService
+    from app.services.ai_provider_service import create_routed_ai_service
+    from app.services.json_helper import loads_json
+
+    project = await db.get(Project, pipeline.project_id)
+    if project is None:
+        raise PipelineStateError("项目不存在")
+
+    cfg = pipeline.config_snapshot or {}
+    vt_cfg = (cfg.get("models") or {}).get("volume_transition") or {}
+    params = (cfg.get("params") or {}).get("volume_transition") or {}
+
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == pipeline.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(
+        select(Character).where(Character.project_id == pipeline.project_id)
+    )).all())
+    context = await _build_outline_continue_context(
+        project=project,
+        latest_outlines=outlines,
+        characters=characters,
+        chapter_count=volume_chapters,
+        plot_stage="development",
+        story_direction=cfg.get("volume_direction") or "自然延续",
+        requirements=f"重新规划第 {outline.order_index} 卷的大纲，共 {volume_chapters} 章",
+        db=db,
+    )
+    template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title,
+        theme=project.theme or "未设定",
+        genre=project.genre or "通用",
+        narrative_perspective=project.narrative_perspective or "第三人称",
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        recent_outlines=context["recent_outlines"],
+        characters_info=context["characters_info"],
+        foreshadow_reminders="暂无需要关注的伏笔",
+        chapter_count=volume_chapters,
+        start_chapter=1,
+        end_chapter=volume_chapters,
+        current_chapter_count=len(outlines),
+        plot_stage_instruction="继续展开情节，深化角色关系",
+        story_direction=cfg.get("volume_direction") or "自然延续",
+        requirements=f"重新规划第 {outline.order_index} 卷的大纲，共 {volume_chapters} 章",
+        mcp_references="",
+    )
+    service = await create_routed_ai_service(
+        db,
+        user_id=user_id,
+        usage_type="outline",
+        provider_config_id=vt_cfg.get("provider_config_id"),
+        model=vt_cfg.get("model"),
+        project_id=pipeline.project_id,
+        task_trace_id=f"pipeline-{pipeline.id[:8]}",
+        enable_mcp=False,
+    )
+    result = await service.generate_text(
+        prompt=prompt,
+        temperature=params.get("temperature", 0.8),
+        max_tokens=params.get("max_tokens", 32000),
+        auto_mcp=False,
+    )
+    raw = result.get("content", "") if isinstance(result, dict) else str(result)
+    data = loads_json(raw)
+    if isinstance(data, dict) and isinstance(data.get("chapters"), list):
+        chapters = data["chapters"]
+        volume_title = str(data.get("title") or outline.title or f"卷 {outline.order_index}")
+        volume_summary = str(data.get("summary") or "")
+    elif isinstance(data, list) and data:
+        chapters = data
+        volume_title = outline.title or f"卷 {outline.order_index}"
+        volume_summary = ""
+    else:
+        raise PipelineStateError("卷大纲重新规划结果无法解析")
+    if not isinstance(chapters, list) or not chapters:
+        raise PipelineStateError("卷大纲重新规划未包含章节列表")
+
+    # 重建骨架：删除该卷旧的空骨架，按新规划重建
+    await db.execute(
+        delete(Chapter).where(
+            Chapter.outline_id == outline.id,
+            Chapter.project_id == pipeline.project_id,
+        )
+    )
+    outline.content = volume_summary
+    outline.structure = json.dumps({
+        "title": volume_title,
+        "summary": volume_summary,
+        "chapters": chapters[:volume_chapters],
+    }, ensure_ascii=False)
+    outline.updated_at = datetime.now()
+
+    last_number = await db.scalar(
+        select(func.max(Chapter.chapter_number)).where(Chapter.project_id == pipeline.project_id)
+    ) or 0
+    for i, ch in enumerate(chapters[:volume_chapters], start=1):
+        ch_title = (ch.get("title") if isinstance(ch, dict) else None) or f"第 {last_number + i} 章"
+        ch_summary = (ch.get("summary") if isinstance(ch, dict) else None) or ""
+        ch_emotion = (ch.get("emotional_tone") or ch.get("emotion") if isinstance(ch, dict) else None) or ""
+        db.add(Chapter(
+            id=str(uuid.uuid4()),
+            project_id=pipeline.project_id,
+            chapter_number=last_number + i,
+            title=ch_title,
+            summary=ch_summary,
+            status=ChapterStatus.PENDING,
+            outline_id=outline.id,
+            sub_index=i,
+            expansion_plan=json.dumps({"summary": ch_summary, "emotional_tone": ch_emotion}, ensure_ascii=False),
+        ))
+    await db.flush()
+    pipeline.current_outline_id = outline.id
     pipeline.current_stage = PipelineStage.CHAPTER_LOOP
