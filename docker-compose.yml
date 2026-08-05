@@ -64,6 +64,12 @@ services:
       - ./logs:/app/logs
       - ./storage/generated_covers:/app/storage/generated_covers
       - ./.env:/app/.env:ro
+      # 代码挂载（开发/热更新：重建镜像前代码直接生效；不覆盖 embedding/data 等运行时数据）
+      - ./backend/app:/app/app
+      - ./backend/static:/app/static
+      - ./backend/alembic:/app/alembic
+      - ./backend/scripts:/app/scripts
+      - ./backend/requirements.txt:/app/requirements.txt:ro
     environment:
       # 时区配置
       - TZ=${TZ:-Asia/Shanghai}
