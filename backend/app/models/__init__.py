@@ -23,6 +23,7 @@ from app.models.announcement import Announcement
 from app.models.ai_provider_config import AIProviderConfig, AIUsageRoute
 from app.models.ai_call_log import AICallLog
 from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
+from app.models.novel_pipeline import NovelPipeline, PipelineCheckpoint
 
 __all__ = [
     "Project",
@@ -58,5 +59,7 @@ __all__ = [
     "AIUsageRoute",
     "AICallLog",
     "LLMComparisonBatch",
-    "LLMComparisonCandidate"
+    "LLMComparisonCandidate",
+    "NovelPipeline",
+    "PipelineCheckpoint",
 ]

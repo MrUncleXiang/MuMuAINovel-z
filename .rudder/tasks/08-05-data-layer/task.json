@@ -3,7 +3,7 @@
   "name": "data-layer",
   "title": "数据层改造：章节状态枚举 + 流水线运行记录",
   "description": "章节状态升级为正式枚举（新增 awaiting_review、rewriting_rollback 等流水线状态）；新增流水线运行记录表（当前阶段、进度、配置快照、检查点历史）。详见 .scratch/auto-novel-pipeline/blueprint.md 第七节。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

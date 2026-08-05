@@ -5,6 +5,18 @@ from app.database import Base
 import uuid
 
 
+class ChapterStatus:
+    """章节状态枚举（流水线 v1 起统一引用常量，不再散落字符串）"""
+
+    DRAFT = "draft"  # 默认：草稿/空
+    PENDING = "pending"  # 排队等待生成
+    RUNNING = "running"  # 正在生成中
+    COMPLETED = "completed"  # 生成完成
+    FAILED = "failed"  # 生成失败
+    AWAITING_REVIEW = "awaiting_review"  # 流水线：已生成，停在检查点等待人工审阅
+    REWRITING_ROLLBACK = "rewriting_rollback"  # 流水线：被回滚后正在重新生成
+
+
 class Chapter(Base):
     """章节表"""
     __tablename__ = "chapters"
