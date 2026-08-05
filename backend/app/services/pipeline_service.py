@@ -16,9 +16,10 @@ import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
+import json
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_engine
@@ -626,31 +627,137 @@ async def _generate_one_chapter(
 
 
 async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id: str) -> None:
-    """卷过渡：当前卷写完 → 切到下一卷 Outline。
+    """卷过渡：当前卷写完 → AI 生成下一卷 Outline + 章节骨架，设为当前卷。
 
-    MVP（检查点任务）：只切到已有的大纲（下一个 Outline）；若没有下一条大纲，
-    暂停并提示（AI 自动生成下一卷大纲属于 volume-transition 任务）。
+    生成 JSON：{title, summary, chapters: [{title, summary}]}，每卷章节数由配置
+    volume_chapters 决定（默认 10）。
     """
-    current = await db.get(Outline, pipeline.current_outline_id) if pipeline.current_outline_id else None
-    if current is None:
-        # 没有当前卷：取项目内第一个大纲
-        first = await db.scalar(
-            select(Outline).where(Outline.project_id == pipeline.project_id)
-            .order_by(Outline.order_index).limit(1)
-        )
-        if first is None:
-            raise PipelineStateError("项目没有大纲，无法进行卷过渡")
-        pipeline.current_outline_id = first.id
-        return
+    from app.api.outlines import _build_outline_continue_context
+    from app.models.character import Character
+    from app.services.prompt_service import PromptService
+    from app.services.ai_provider_service import create_routed_ai_service
+    from app.services.json_helper import loads_json
 
-    next_outline = await db.scalar(
-        select(Outline)
-        .where(Outline.project_id == pipeline.project_id, Outline.order_index > current.order_index)
-        .order_by(Outline.order_index)
-        .limit(1)
+    project = await db.get(Project, pipeline.project_id)
+    if project is None:
+        raise PipelineStateError("项目不存在")
+
+    cfg = pipeline.config_snapshot or {}
+    vt_cfg = (cfg.get("models") or {}).get("volume_transition") or {}
+    params = (cfg.get("params") or {}).get("volume_transition") or {}
+    volume_chapters = int((cfg.get("volume_chapters") or 10))
+
+    # 已有大纲（作为续写上下文）
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == pipeline.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(
+        select(Character).where(Character.project_id == pipeline.project_id)
+    )).all())
+    context = await _build_outline_continue_context(
+        project=project,
+        latest_outlines=outlines,
+        characters=characters,
+        chapter_count=volume_chapters,
+        plot_stage="development",
+        story_direction=cfg.get("volume_direction") or "自然延续",
+        requirements=f"生成下一卷（第 {len(outlines) + 1} 卷）的大纲，共 {volume_chapters} 章",
+        db=db,
     )
-    if next_outline is not None:
-        pipeline.current_outline_id = next_outline.id
-        return
+    start = len(outlines) + 1
+    template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title,
+        theme=project.theme or "未设定",
+        genre=project.genre or "通用",
+        narrative_perspective=project.narrative_perspective or "第三人称",
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        recent_outlines=context["recent_outlines"],
+        characters_info=context["characters_info"],
+        foreshadow_reminders="暂无需要关注的伏笔",
+        chapter_count=volume_chapters,
+        start_chapter=start,
+        end_chapter=start + volume_chapters - 1,
+        current_chapter_count=len(outlines),
+        plot_stage_instruction="继续展开情节，深化角色关系",
+        story_direction=cfg.get("volume_direction") or "自然延续",
+        requirements=f"生成下一卷（第 {len(outlines) + 1} 卷）的大纲，共 {volume_chapters} 章",
+        mcp_references="",
+    )
 
-    raise PipelineStateError("没有下一卷大纲（AI 自动生成下一卷在 volume-transition 任务实现）")
+    service = await create_routed_ai_service(
+        db,
+        user_id=user_id,
+        usage_type="outline",
+        provider_config_id=vt_cfg.get("provider_config_id"),
+        model=vt_cfg.get("model"),
+        project_id=pipeline.project_id,
+        task_trace_id=f"pipeline-{pipeline.id[:8]}",
+        enable_mcp=False,
+    )
+    result = await service.generate_text(
+        prompt=prompt,
+        temperature=params.get("temperature", 0.8),
+        max_tokens=params.get("max_tokens", 32000),
+        auto_mcp=False,
+    )
+    raw = result.get("content", "") if isinstance(result, dict) else str(result)
+    data = loads_json(raw)
+    # OUTLINE_CONTINUE 模板输出为章节 JSON 数组：[{title, summary}, ...]
+    if isinstance(data, dict) and isinstance(data.get("chapters"), list):
+        chapters = data["chapters"]
+        volume_title = str(data.get("title") or f"卷 {len(outlines) + 1}")
+        volume_summary = str(data.get("summary") or "")
+    elif isinstance(data, list) and data:
+        chapters = data
+        volume_title = f"卷 {len(outlines) + 1}"
+        volume_summary = ""
+    else:
+        raise PipelineStateError("下一卷大纲生成结果无法解析")
+    if not isinstance(chapters, list) or not chapters:
+        raise PipelineStateError("下一卷大纲未包含章节列表")
+
+    # 建 Outline（=卷）+ 章节骨架
+    # structure 需为字典（现有上下文服务读 structure.get('emotion') 等），卷级用 dict 包装
+    new_outline = Outline(
+        id=str(uuid.uuid4()),
+        project_id=pipeline.project_id,
+        title=volume_title,
+        content=volume_summary or "\n\n".join(
+            (ch.get("summary") if isinstance(ch, dict) else "") for ch in chapters[:volume_chapters]
+        ),
+        structure=json.dumps({
+            "title": volume_title,
+            "summary": volume_summary,
+            "chapters": chapters[:volume_chapters],
+        }, ensure_ascii=False),
+        order_index=len(outlines) + 1,
+    )
+    db.add(new_outline)
+    await db.flush()
+
+    last_number = await db.scalar(
+        select(func.max(Chapter.chapter_number)).where(Chapter.project_id == pipeline.project_id)
+    ) or 0
+    for i, ch in enumerate(chapters[:volume_chapters], start=1):
+        ch_title = (ch.get("title") if isinstance(ch, dict) else None) or f"第 {last_number + i} 章"
+        ch_summary = (ch.get("summary") if isinstance(ch, dict) else None) or ""
+        ch_emotion = (ch.get("emotional_tone") or ch.get("emotion") if isinstance(ch, dict) else None) or ""
+        db.add(Chapter(
+            id=str(uuid.uuid4()),
+            project_id=pipeline.project_id,
+            chapter_number=last_number + i,
+            title=ch_title,
+            summary=ch_summary,
+            status=ChapterStatus.PENDING,
+            outline_id=new_outline.id,
+            sub_index=i,
+            expansion_plan=json.dumps({"summary": ch_summary, "emotional_tone": ch_emotion}, ensure_ascii=False),
+        ))
+    await db.flush()
+    pipeline.current_outline_id = new_outline.id
+    pipeline.current_stage = PipelineStage.CHAPTER_LOOP
