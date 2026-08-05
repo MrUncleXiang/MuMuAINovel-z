@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .rudder/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "backend/app/models/novel_pipeline.py", "reason": "流水线运行记录+检查点模型"}
+{"file": "backend/app/models/chapter.py", "reason": "ChapterStatus 常量"}
+{"file": "backend/alembic/postgres/versions/20260805_1000_f1c8d261_add_novel_pipelines.py", "reason": "postgres 迁移（已应用到生产）"}
