@@ -423,6 +423,15 @@ async def _run_pipeline_loop(
                     pipeline.chapter_count = await _count_completed_chapters(db, pipeline.project_id)
                     await db.commit()
 
+                    # 预算统计与超限检查
+                    await _update_budget(db, pipeline)
+                    budget_exceeded = await _budget_exceeded(db, pipeline)
+                    if budget_exceeded:
+                        pipeline.status = PipelineStatus.PAUSED
+                        pipeline.last_error = f"预算已用完（已用 ¥{pipeline.budget_used_amount_cents / 100:.2f}），流水线暂停；可在配置中加预算后继续"
+                        await db.commit()
+                        return
+
                     # 检查点判断
                     due, ctype = await _checkpoint_due(db, pipeline)
                     if due:
@@ -506,6 +515,44 @@ async def _count_completed_chapters(db: AsyncSession, project_id: str) -> int:
         )
         or 0
     )
+
+
+async def _update_budget(db: AsyncSession, pipeline: NovelPipeline) -> None:
+    """根据 AI 调用日志汇总本流水线的 tokens 与估算费用。"""
+    from sqlalchemy import func
+
+    from app.models.ai_call_log import AICallLog
+    from app.services.pricing import estimate_cost_cents
+
+    trace_prefix = f"pipeline-{pipeline.id[:8]}"
+    rows = list((await db.scalars(
+        select(AICallLog).where(
+            AICallLog.task_trace_id.like(f"{trace_prefix}%"),
+            AICallLog.status == "success",
+        )
+    )).all())
+    total_tokens = 0
+    total_cents = 0
+    for row in rows:
+        pt = row.prompt_tokens or 0
+        ct = row.completion_tokens or 0
+        total_tokens += pt + ct
+        total_cents += estimate_cost_cents(row.actual_model, pt, ct)
+    pipeline.budget_used_tokens = total_tokens
+    pipeline.budget_used_amount_cents = total_cents
+
+
+async def _budget_exceeded(db: AsyncSession, pipeline: NovelPipeline) -> bool:
+    """预算是否超限（金额上限或 token 上限，任一超限即暂停）。"""
+    cfg = pipeline.config_snapshot or {}
+    budget = cfg.get("budget") or {}
+    max_cents = int(budget.get("max_amount_cents") or 0)
+    max_tokens = int(budget.get("max_tokens") or 0)
+    if max_cents > 0 and pipeline.budget_used_amount_cents >= max_cents:
+        return True
+    if max_tokens > 0 and pipeline.budget_used_tokens >= max_tokens:
+        return True
+    return False
 
 
 async def _current_volume_range(db: AsyncSession, pipeline: NovelPipeline, *, end: bool) -> Optional[int]:

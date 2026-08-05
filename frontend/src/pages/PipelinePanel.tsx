@@ -236,6 +236,9 @@ export default function PipelinePanel() {
               <Descriptions.Item label="配置">
                 每 {everyN} 章 / 里程碑 {milestone || '无'} 章
               </Descriptions.Item>
+              <Descriptions.Item label="预算">
+                已用 ¥{(pipeline.budget_used_amount_cents / 100).toFixed(2)} / {((cfg.budget?.max_amount_cents ?? 0) / 100).toFixed(0)} · {pipeline.budget_used_tokens} tokens
+              </Descriptions.Item>
             </Descriptions>
           </Card>
 
