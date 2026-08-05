@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert, Button, Card, Col, Collapse, Descriptions, Divider, Empty, Form, InputNumber, Modal, Row,
   Select, Space, Steps, Switch, Tag, Typography, message,
 } from 'antd';
 import {
-  CaretRightOutlined, CheckOutlined, PauseOutlined, PlayCircleOutlined,
+  CaretRightOutlined, CheckOutlined, FundOutlined, PauseOutlined, PlayCircleOutlined,
   ReloadOutlined, SettingOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { aiProviderApi, pipelineApi } from '../services/api';
@@ -36,6 +36,7 @@ const POLL_INTERVAL = 5000;
 
 export default function PipelinePanel() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
   const [pipeline, setPipeline] = useState<NovelPipeline | null>(null);
   const [checkpoints, setCheckpoints] = useState<PipelineCheckpoint[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -265,6 +266,9 @@ export default function PipelinePanel() {
                   loading={actionLoading === 'rollback'}
                 >
                   回滚重写
+                </Button>
+                <Button icon={<FundOutlined />} onClick={() => navigate(`/project/${projectId}/chapter-analysis`)}>
+                  剧情分析 / 多模型对比
                 </Button>
               </Space>
               <Divider />
