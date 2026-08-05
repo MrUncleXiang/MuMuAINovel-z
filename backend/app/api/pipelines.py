@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.novel_pipeline import NovelPipeline, PipelineCheckpoint
 from app.models.project import Project
 from app.schemas.pipeline import (
+    PipelineCheckpointResponse,
     PipelineListResponse,
     PipelineResponse,
     PipelineStartRequest,
@@ -18,9 +19,12 @@ from app.schemas.pipeline import (
 from app.services.pipeline_service import (
     PipelineNotFoundError,
     PipelineStateError,
+    approve_checkpoint,
     get_pipeline,
+    list_checkpoints,
     pause_pipeline,
     resume_pipeline,
+    rollback_to_checkpoint,
     start_pipeline,
     stop_pipeline,
 )
@@ -124,3 +128,57 @@ async def stop(pipeline_id: str, user=Depends(require_login), db: AsyncSession =
         return await _pipeline_response(db, pipeline, user.user_id)
     except PipelineNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/{pipeline_id}/checkpoints", response_model=list[PipelineCheckpointResponse], summary="检查点历史")
+async def get_checkpoints(
+    pipeline_id: str,
+    user=Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        rows = await list_checkpoints(db, user_id=user.user_id, pipeline_id=pipeline_id)
+        return [PipelineCheckpointResponse.model_validate(r) for r in rows]
+    except PipelineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/{pipeline_id}/checkpoints/{checkpoint_id}/continue", response_model=PipelineResponse, summary="审阅：确认继续")
+async def checkpoint_continue(
+    pipeline_id: str,
+    checkpoint_id: str,
+    user=Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        pipeline = await approve_checkpoint(
+            db, user_id=user.user_id, pipeline_id=pipeline_id, checkpoint_id=checkpoint_id,
+        )
+        return await _pipeline_response(db, pipeline, user.user_id)
+    except PipelineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PipelineStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/{pipeline_id}/checkpoints/{checkpoint_id}/rollback", response_model=PipelineResponse, summary="审阅：回滚重写")
+async def checkpoint_rollback(
+    pipeline_id: str,
+    checkpoint_id: str,
+    mode: str = Query("content", pattern="^(content|content\+outline)$"),
+    user=Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        pipeline = await rollback_to_checkpoint(
+            db,
+            user_id=user.user_id,
+            pipeline_id=pipeline_id,
+            target_checkpoint_id=checkpoint_id,
+            mode=mode,
+        )
+        return await _pipeline_response(db, pipeline, user.user_id)
+    except PipelineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PipelineStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

@@ -48,9 +48,6 @@ class PipelineNotFoundError(ValueError):
 
 class PipelineStateError(ValueError):
     pass
-
-
-# ---------- 默认配置（蓝图第六节：全阶段默认 deepseek-v4-flash，用户可覆盖） ----------
 def default_pipeline_config() -> dict:
     return {
         "milestone_chapters": 30,          # 里程碑：累计章节数 ≥ 30 暂停
@@ -65,7 +62,7 @@ def default_pipeline_config() -> dict:
         "budget": {"max_amount_cents": 3000, "max_tokens": 0},  # 默认预算 ¥30
         "params": {                        # 每阶段生成参数（用户可调）
             "book": {"temperature": 0.8, "max_tokens": 32000},
-            "chapter": {"temperature": 0.8, "max_tokens": 32000},
+            "chapter": {"temperature": 0.8, "max_tokens": 32000, "target_word_count": 3000},
             "analysis": {"temperature": 0.3, "max_tokens": 8000},
             "volume_transition": {"temperature": 0.8, "max_tokens": 32000},
         },
@@ -200,6 +197,128 @@ async def stop_pipeline(db: AsyncSession, *, user_id: str, pipeline_id: str) -> 
     return pipeline
 
 
+# ---------- 检查点操作 ----------
+async def list_checkpoints(
+    db: AsyncSession, *, user_id: str, pipeline_id: str,
+) -> list[PipelineCheckpoint]:
+    await get_pipeline(db, pipeline_id, user_id)
+    return list((await db.scalars(
+        select(PipelineCheckpoint)
+        .where(PipelineCheckpoint.pipeline_id == pipeline_id)
+        .order_by(PipelineCheckpoint.created_at.desc())
+    )).all())
+
+
+async def get_checkpoint(
+    db: AsyncSession, *, user_id: str, pipeline_id: str, checkpoint_id: str,
+) -> PipelineCheckpoint:
+    await get_pipeline(db, pipeline_id, user_id)
+    checkpoint = await db.get(PipelineCheckpoint, checkpoint_id)
+    if checkpoint is None or checkpoint.pipeline_id != pipeline_id:
+        raise PipelineNotFoundError("检查点不存在")
+    return checkpoint
+
+
+async def approve_checkpoint(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    pipeline_id: str,
+    checkpoint_id: str,
+) -> NovelPipeline:
+    """检查点审阅：确认继续。将当前检查点标记 approved 并恢复流水线。"""
+    pipeline = await get_pipeline(db, pipeline_id, user_id)
+    checkpoint = await get_checkpoint(db, user_id=user_id, pipeline_id=pipeline_id, checkpoint_id=checkpoint_id)
+    if checkpoint.status != CheckpointStatus.PENDING:
+        raise PipelineStateError(f"检查点状态为 {checkpoint.status}，不能再次决策")
+    checkpoint.status = CheckpointStatus.APPROVED
+    checkpoint.decision = "continue"
+    checkpoint.decided_at = datetime.now()
+    history = list(pipeline.checkpoint_history or [])
+    for item in history:
+        if item.get("checkpoint_id") == checkpoint.id:
+            item["status"] = CheckpointStatus.APPROVED
+            item["decision"] = "continue"
+    pipeline.checkpoint_history = history
+    pipeline.current_checkpoint_id = None
+    if pipeline.current_stage == PipelineStage.CHECKPOINT:
+        pipeline.current_stage = PipelineStage.CHAPTER_LOOP
+    pipeline.status = PipelineStatus.RUNNING
+    await db.commit()
+    _spawn_loop(await _session_factory_for(user_id), pipeline.id, user_id)
+    return pipeline
+
+
+async def rollback_to_checkpoint(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    pipeline_id: str,
+    target_checkpoint_id: str,
+    mode: str = "content",
+) -> NovelPipeline:
+    """检查点审阅：回滚。删除目标检查点之后的所有章节（纯删除，蓝图决策），然后自动重写。
+
+    mode="content"：只回退章节正文（默认）。
+    mode="content+outline"：同时回退大纲（细化实现在 rollback 任务）。
+    """
+    from sqlalchemy import delete
+
+    pipeline = await get_pipeline(db, pipeline_id, user_id)
+    target = await get_checkpoint(db, user_id=user_id, pipeline_id=pipeline_id, checkpoint_id=target_checkpoint_id)
+    if mode not in {"content", "content+outline"}:
+        raise PipelineStateError("mode 必须是 content 或 content+outline")
+
+    # 1) 回滚目标检查点之后的章节：删除内容、重置为草稿（骨架保留，重写时重新生成）
+    #    纯删除语义 = 废弃内容不留存；章节骨架（标题/编号/大纲关联）是计划而非内容，保留。
+    affected = list((await db.scalars(
+        select(Chapter).where(
+            Chapter.project_id == pipeline.project_id,
+            Chapter.chapter_number > target.trigger_chapter_number,
+        )
+    )).all())
+    for chapter in affected:
+        chapter.content = ""
+        chapter.summary = ""
+        chapter.word_count = 0
+        chapter.status = ChapterStatus.DRAFT
+        chapter.updated_at = datetime.now()
+
+    # 2) content+outline：额外重置目标检查点之后创建的大纲（细粒度实现留待 rollback 任务）
+    if mode == "content+outline":
+        await db.execute(
+            delete(Outline).where(
+                Outline.project_id == pipeline.project_id,
+                Outline.created_at > target.created_at,
+            )
+        )
+
+    # 3) 记录当前挂起检查点的决策为 rollback
+    if pipeline.current_checkpoint_id:
+        cur = await db.get(PipelineCheckpoint, pipeline.current_checkpoint_id)
+        if cur is not None and cur.status == CheckpointStatus.PENDING:
+            cur.status = CheckpointStatus.ROLLBACK
+            cur.decision = "rollback"
+            cur.rollback_to_checkpoint_id = target.id
+            cur.decided_at = datetime.now()
+    history = list(pipeline.checkpoint_history or [])
+    for item in history:
+        if item.get("checkpoint_id") == pipeline.current_checkpoint_id:
+            item["status"] = CheckpointStatus.ROLLBACK
+            item["decision"] = "rollback"
+            item["rollback_to"] = target.id
+    pipeline.checkpoint_history = history
+
+    # 4) 重置计数并恢复推进
+    pipeline.chapter_count = target.trigger_chapter_number
+    pipeline.current_checkpoint_id = None
+    pipeline.current_stage = PipelineStage.CHAPTER_LOOP
+    pipeline.status = PipelineStatus.RUNNING
+    await db.commit()
+    _spawn_loop(await _session_factory_for(user_id), pipeline.id, user_id)
+    return pipeline
+
+
 # ---------- 主循环 ----------
 async def _run_pipeline_loop(
     session_factory: async_sessionmaker[AsyncSession],
@@ -233,7 +352,13 @@ async def _run_pipeline_loop(
                     continue
 
                 if pipeline.current_stage == PipelineStage.VOLUME_TRANSITION:
-                    await _transition_volume(db, pipeline, user_id)
+                    try:
+                        await _transition_volume(db, pipeline, user_id)
+                    except PipelineStateError as exc:
+                        pipeline.status = PipelineStatus.PAUSED
+                        pipeline.last_error = str(exc)
+                        await db.commit()
+                        return
                     pipeline.current_stage = PipelineStage.CHAPTER_LOOP
                     await db.commit()
                     continue
@@ -257,8 +382,21 @@ async def _run_pipeline_loop(
                         await db.commit()
                         continue
 
-                    # 生成该章节（复用现有后台生成逻辑）
-                    ok, err = await _generate_one_chapter(db, pipeline, chapter, user_id)
+                    # 生成该章节（复用现有后台生成逻辑），空内容/失败自动重试
+                    ok, err = False, ""
+                    for attempt in range(1, 4):
+                        ok, err = await _generate_one_chapter(db, pipeline, chapter, user_id)
+                        if not ok:
+                            await asyncio.sleep(5 * attempt)
+                            continue
+                        # 校验内容非空（推理型模型可能在 token 上限内只输出思考）
+                        fresh = await db.get(Chapter, chapter.id)
+                        if fresh and (fresh.content or "").strip():
+                            break
+                        err = "生成结果为空（模型只输出了思考内容），重试"
+                        chapter.status = ChapterStatus.PENDING
+                        await db.commit()
+                        await asyncio.sleep(5 * attempt)
                     if not ok:
                         chapter.status = ChapterStatus.FAILED
                         pipeline.last_error = err
@@ -431,6 +569,7 @@ async def _generate_one_chapter(
     provider_config_id = chapter_model_cfg.get("provider_config_id")
     model = chapter_model_cfg.get("model")
     params = (cfg.get("params") or {}).get("chapter") or {}
+    target_word_count = int(params.get("target_word_count", 3000) or 3000)
 
     tracker = TaskProgressTracker(f"pipeline-{pipeline.id[:8]}", user_id, "流水线章节")
     try:
@@ -449,7 +588,7 @@ async def _generate_one_chapter(
             task_input={
                 "chapter_id": chapter.id,
                 "style_id": None,
-                "target_word_count": 3000,
+                "target_word_count": target_word_count,
                 "enable_mcp": False,
                 "model": model,
                 "provider_config_id": provider_config_id,
@@ -471,23 +610,22 @@ async def _generate_one_chapter(
 
 
 async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id: str) -> None:
-    """卷过渡：当前卷写完 → 生成下一卷的 Outline 并设为当前卷。
+    """卷过渡：当前卷写完 → 切到下一卷 Outline。
 
-    MVP（本任务）：若项目还有未归入任何卷的大纲或章节，直接选下一个；
-    否则创建一条新的 Outline（标题/内容由 AI 生成，卷过渡细化在 volume-transition 任务）。
+    MVP（检查点任务）：只切到已有的大纲（下一个 Outline）；若没有下一条大纲，
+    暂停并提示（AI 自动生成下一卷大纲属于 volume-transition 任务）。
     """
-    # 1) 尝试找一个还没有被任何卷用过的下一个大纲（按 order_index）
-    used_outline_ids = select(Outline.id)
-    next_outline = await db.scalar(
-        select(Outline)
-        .where(Outline.project_id == pipeline.project_id)
-        .order_by(Outline.order_index)
-        .limit(1)
-    )
-    # 简化：直接找当前卷之后的下一个大纲
     current = await db.get(Outline, pipeline.current_outline_id) if pipeline.current_outline_id else None
     if current is None:
-        raise PipelineStateError("当前卷不存在，无法过渡")
+        # 没有当前卷：取项目内第一个大纲
+        first = await db.scalar(
+            select(Outline).where(Outline.project_id == pipeline.project_id)
+            .order_by(Outline.order_index).limit(1)
+        )
+        if first is None:
+            raise PipelineStateError("项目没有大纲，无法进行卷过渡")
+        pipeline.current_outline_id = first.id
+        return
 
     next_outline = await db.scalar(
         select(Outline)
@@ -499,49 +637,4 @@ async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id:
         pipeline.current_outline_id = next_outline.id
         return
 
-    # 2) 没有下一条大纲 → 用 AI 生成一卷新大纲（继续模式，简单版）
-    from app.services.prompt_service import PromptService
-
-    project = await db.get(Project, pipeline.project_id)
-    title = project.title if project else "未命名"
-    template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
-    prompt = PromptService.format_prompt(
-        template,
-        title=title,
-        latest_outline_title=current.title,
-        latest_outline_content=current.content or "",
-        requirements="生成下一卷",
-    )
-    cfg = pipeline.config_snapshot or {}
-    vt_cfg = (cfg.get("models") or {}).get("volume_transition") or {}
-    params = (cfg.get("params") or {}).get("volume_transition") or {}
-
-    from app.services.ai_provider_service import create_routed_ai_service
-
-    service = await create_routed_ai_service(
-        db,
-        user_id=user_id,
-        usage_type="outline",
-        provider_config_id=vt_cfg.get("provider_config_id"),
-        model=vt_cfg.get("model"),
-        project_id=pipeline.project_id,
-        task_trace_id=f"pipeline-{pipeline.id[:8]}",
-        enable_mcp=False,
-    )
-    result = await service.generate_text(
-        prompt=prompt,
-        temperature=params.get("temperature", 0.8),
-        max_tokens=params.get("max_tokens", 32000),
-        auto_mcp=False,
-    )
-    content = result.get("content", "") if isinstance(result, dict) else str(result)
-    new_outline = Outline(
-        id=str(uuid.uuid4()),
-        project_id=pipeline.project_id,
-        title=f"卷 {current.order_index + 1}",
-        content=content,
-        order_index=current.order_index + 1,
-    )
-    db.add(new_outline)
-    await db.flush()
-    pipeline.current_outline_id = new_outline.id
+    raise PipelineStateError("没有下一卷大纲（AI 自动生成下一卷在 volume-transition 任务实现）")
