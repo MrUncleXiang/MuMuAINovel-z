@@ -197,6 +197,22 @@ async def stop_pipeline(db: AsyncSession, *, user_id: str, pipeline_id: str) -> 
     return pipeline
 
 
+async def update_pipeline_config(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    pipeline_id: str,
+    config: dict,
+) -> NovelPipeline:
+    """更新流水线配置（运行中也可改，下次循环迭代生效）。"""
+    pipeline = await get_pipeline(db, pipeline_id, user_id)
+    if pipeline.status == PipelineStatus.STOPPED:
+        raise PipelineStateError("流水线已停止，无法修改配置")
+    pipeline.config_snapshot = merge_config({**pipeline.config_snapshot, **config})
+    await db.commit()
+    return pipeline
+
+
 # ---------- 检查点操作 ----------
 async def list_checkpoints(
     db: AsyncSession, *, user_id: str, pipeline_id: str,

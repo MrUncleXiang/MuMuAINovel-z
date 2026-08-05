@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Alert, Button, Card, Col, Descriptions, Divider, Empty, Modal, Row,
-  Space, Steps, Tag, Typography, message,
+  Alert, Button, Card, Col, Collapse, Descriptions, Divider, Empty, Form, InputNumber, Modal, Row,
+  Select, Space, Steps, Switch, Tag, Typography, message,
 } from 'antd';
 import {
   CaretRightOutlined, CheckOutlined, PauseOutlined, PlayCircleOutlined,
-  ReloadOutlined, StopOutlined,
+  ReloadOutlined, SettingOutlined, StopOutlined,
 } from '@ant-design/icons';
-import { pipelineApi } from '../services/api';
-import type { NovelPipeline, PipelineCheckpoint } from '../types';
+import { aiProviderApi, pipelineApi } from '../services/api';
+import type { AIProviderConfig, NovelPipeline, PipelineCheckpoint } from '../types';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -40,6 +40,64 @@ export default function PipelinePanel() {
   const [checkpoints, setCheckpoints] = useState<PipelineCheckpoint[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState<PipelineCheckpoint | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configForm] = Form.useForm();
+  const [providers, setProviders] = useState<AIProviderConfig[]>([]);
+
+  useEffect(() => {
+    aiProviderApi.list().then(setProviders).catch(() => undefined);
+  }, []);
+
+  const openConfig = () => {
+    if (!pipeline) return;
+    const c = pipeline.config_snapshot ?? {};
+    configForm.setFieldsValue({
+      milestone_chapters: c.milestone_chapters ?? 30,
+      checkpoint_every_n: c.checkpoint_every_n ?? 10,
+      checkpoint_on_volume_end: c.checkpoint_on_volume_end ?? true,
+      budget_cents: Math.round((c.budget?.max_amount_cents ?? 3000) / 100),
+      chapter_provider: c.models?.chapter?.provider_config_id ?? '',
+      chapter_model: c.models?.chapter?.model ?? '',
+      chapter_target_words: c.params?.chapter?.target_word_count ?? 3000,
+      chapter_temperature: c.params?.chapter?.temperature ?? 0.8,
+      analysis_provider: c.models?.analysis?.provider_config_id ?? '',
+      analysis_model: c.models?.analysis?.model ?? '',
+    });
+    setConfigOpen(true);
+  };
+
+  const saveConfig = async () => {
+    if (!pipeline) return;
+    const v = await configForm.validateFields();
+    const payload = {
+      milestone_chapters: v.milestone_chapters,
+      checkpoint_every_n: v.checkpoint_every_n,
+      checkpoint_on_volume_end: v.checkpoint_on_volume_end,
+      budget: { max_amount_cents: Math.round((v.budget_cents ?? 30) * 100), max_tokens: 0 },
+      models: {
+        chapter: { provider_config_id: v.chapter_provider || null, model: v.chapter_model || null },
+        analysis: { provider_config_id: v.analysis_provider || null, model: v.analysis_model || null },
+      },
+      params: {
+        chapter: {
+          target_word_count: v.chapter_target_words,
+          temperature: v.chapter_temperature,
+          max_tokens: Math.max(2000, (v.chapter_target_words ?? 3000) * 3),
+        },
+      },
+    };
+    setActionLoading('config');
+    try {
+      await pipelineApi.updateConfig(pipeline.id, payload);
+      message.success('配置已保存');
+      setConfigOpen(false);
+      await refresh();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '保存失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -156,6 +214,7 @@ export default function PipelinePanel() {
               <Button type="primary" icon={<CaretRightOutlined />} onClick={() => runAction('resume', () => pipelineApi.resume(pipeline.id))} loading={actionLoading === 'resume'}>继续</Button>
             ) : null}
             <Button danger icon={<StopOutlined />} onClick={() => runAction('stop', () => pipelineApi.stop(pipeline.id))} loading={actionLoading === 'stop'}>停止</Button>
+            <Button icon={<SettingOutlined />} onClick={openConfig} loading={actionLoading === 'config'}>配置</Button>
           </Space>
 
           {/* 三层状态展示：阶段流程线 */}
@@ -248,6 +307,73 @@ export default function PipelinePanel() {
         <Text>
           将回滚到第 {rollbackTarget?.trigger_chapter_number ?? 0} 章检查点，之后的章节内容将被清空并重新生成（纯删除，不留存）。
         </Text>
+      </Modal>
+
+      {/* 配置弹窗：里程碑与每N章分开罗列、放在一起 */}
+      <Modal
+        open={configOpen}
+        title="流水线配置"
+        onOk={saveConfig}
+        onCancel={() => setConfigOpen(false)}
+        okText="保存配置"
+        confirmLoading={actionLoading === 'config'}
+        width={560}
+      >
+        <Form form={configForm} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="milestone_chapters" label="里程碑（写完 N 章暂停提醒）">
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="checkpoint_every_n" label="每 N 章停一次审阅">
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="checkpoint_on_volume_end" label="每卷结束必停" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="budget_cents" label="预算上限（元）">
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Collapse
+            ghost
+            items={[{
+              key: 'models',
+              label: '模型与参数（默认全部使用系统配置）',
+              children: (
+                <>
+                  <Form.Item name="chapter_provider" label="章节写作 - AI 服务">
+                    <Select allowClear placeholder="使用默认路由" options={providers.map(p => ({ value: p.id, label: p.name }))} />
+                  </Form.Item>
+                  <Form.Item name="chapter_model" label="章节写作 - 模型">
+                    <Select allowClear placeholder="使用默认模型"
+                      options={(providers.find(p => p.id === configForm.getFieldValue('chapter_provider'))?.models ?? []).map(m => ({ value: m, label: m }))} />
+                  </Form.Item>
+                  <Row gutter={16}>
+                    <Col span={8}><Form.Item name="chapter_target_words" label="每章字数"><InputNumber min={200} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="chapter_temperature" label="温度"><InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
+                  </Row>
+                  <Form.Item name="analysis_provider" label="章节分析 - AI 服务">
+                    <Select allowClear placeholder="使用默认路由" options={providers.map(p => ({ value: p.id, label: p.name }))} />
+                  </Form.Item>
+                  <Form.Item name="analysis_model" label="章节分析 - 模型">
+                    <Select allowClear placeholder="使用默认模型"
+                      options={(providers.find(p => p.id === configForm.getFieldValue('analysis_provider'))?.models ?? []).map(m => ({ value: m, label: m }))} />
+                  </Form.Item>
+                </>
+              ),
+            }]}
+          />
+        </Form>
       </Modal>
     </div>
   );

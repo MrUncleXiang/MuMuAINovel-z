@@ -27,6 +27,7 @@ from app.services.pipeline_service import (
     rollback_to_checkpoint,
     start_pipeline,
     stop_pipeline,
+    update_pipeline_config,
 )
 
 router = APIRouter(prefix="/pipelines", tags=["小说流水线"])
@@ -114,6 +115,22 @@ async def pause(pipeline_id: str, user=Depends(require_login), db: AsyncSession 
 async def resume(pipeline_id: str, user=Depends(require_login), db: AsyncSession = Depends(get_db)):
     try:
         pipeline = await resume_pipeline(db, user_id=user.user_id, pipeline_id=pipeline_id)
+        return await _pipeline_response(db, pipeline, user.user_id)
+    except PipelineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PipelineStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/{pipeline_id}/config", response_model=PipelineResponse, summary="更新流水线配置")
+async def update_config(
+    pipeline_id: str,
+    data: dict,
+    user=Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        pipeline = await update_pipeline_config(db, user_id=user.user_id, pipeline_id=pipeline_id, config=data)
         return await _pipeline_response(db, pipeline, user.user_id)
     except PipelineNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

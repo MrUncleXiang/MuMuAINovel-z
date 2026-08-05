@@ -408,6 +408,8 @@ export const pipelineApi = {
     api.get<unknown, PipelineCheckpoint[]>(`/pipelines/${id}/checkpoints`),
   checkpointContinue: (id: string, checkpointId: string) =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/continue`),
+  updateConfig: (id: string, config: Record<string, any>) =>
+    api.post<unknown, NovelPipeline>(`/pipelines/${id}/config`, config),
   checkpointRollback: (id: string, checkpointId: string, mode = 'content') =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/rollback?mode=${mode}`),
 };
