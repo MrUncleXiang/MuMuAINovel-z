@@ -425,28 +425,34 @@ async def _run_pipeline_loop(
                         await db.commit()
                         continue
 
-                    # 生成该章节（复用现有后台生成逻辑），空内容/失败自动重试
+                    # 生成该章节（复用现有后台生成逻辑），空内容/字数不足/失败自动重试
                     ok, err = False, ""
                     content_ok = False
+                    cfg = pipeline.config_snapshot or {}
+                    target_words = int(((cfg.get("params") or {}).get("chapter") or {}).get("target_word_count", 2500))
+                    min_words = int(target_words * 0.7)  # 字数达标线：目标 70%
                     for attempt in range(1, 4):
                         ok, err = await _generate_one_chapter(db, pipeline, chapter, user_id)
                         if not ok:
                             await asyncio.sleep(5 * attempt)
                             continue
-                        # 校验内容非空（推理型模型可能在 token 上限内只输出思考）
+                        # 校验内容非空且字数达标（推理型模型可能只输出思考，或字数远低于目标）
                         fresh = await db.get(Chapter, chapter.id)
-                        if fresh and (fresh.content or "").strip():
+                        content_len = len((fresh.content or "") if fresh else "")
+                        if content_len >= min_words:
                             content_ok = True
                             break
-                        err = "生成结果为空（模型只输出了思考内容）"
+                        err = f"生成结果不足（{content_len}字 < 目标{min_words}字）"
                         chapter.status = ChapterStatus.PENDING
+                        chapter.content = ""
+                        chapter.word_count = 0
                         await db.commit()
                         await asyncio.sleep(5 * attempt)
                     if not content_ok:
-                        # 空内容/失败 3 次后必须终止，避免死循环烧钱
+                        # 连续不达标/失败 3 次后必须终止，避免死循环烧钱
                         chapter.status = ChapterStatus.FAILED
                         pipeline.status = PipelineStatus.PAUSED
-                        pipeline.last_error = f"第{chapter.chapter_number}章连续生成失败/空内容：{err}"
+                        pipeline.last_error = f"第{chapter.chapter_number}章连续生成失败/字数不足：{err}"
                         await db.commit()
                         return
 

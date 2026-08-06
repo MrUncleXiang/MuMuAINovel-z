@@ -57,9 +57,11 @@ async def create_project(
         
         logger.info(f"创建新项目: {project.title}, user_id={user_id}")
         
-        # 创建项目时自动设置user_id
+        # 创建项目时自动设置user_id，description 为空时用 theme 兜底（防止残缺项目）
         project_data = project.model_dump()
         project_data['user_id'] = user_id
+        if not (project_data.get('description') or '').strip():
+            project_data['description'] = project_data.get('theme') or '（未填写简介）'
         db_project = Project(**project_data)
         
         db.add(db_project)
