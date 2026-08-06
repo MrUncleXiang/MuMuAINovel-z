@@ -20,6 +20,7 @@ from app.models.settings import Settings
 from app.services.cover_providers.base_cover_provider import BaseCoverProvider, CoverGenerationResult
 from app.services.cover_providers.gemini_cover_provider import GeminiCoverProvider
 from app.services.cover_providers.grok_cover_provider import GrokCoverProvider
+from app.services.cover_providers.openai_compatible_cover_provider import OpenAICompatibleCoverProvider
 from app.services.prompt_service import PromptService
 
 logger = get_logger(__name__)
@@ -229,7 +230,9 @@ class CoverGenerationService:
             if normalized_base_url.endswith("/v1beta"):
                 return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
             return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://api.mumuverse.space/v1")
-        raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok 或 MuMuのAPI 作为封面图片 Provider")
+        if provider_value in ("custom", "openai"):
+            return OpenAICompatibleCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://api.openai.com/v1")
+        raise HTTPException(status_code=400, detail="封面 Provider 仅支持 Gemini、Grok、MuMuのAPI 或自定义 OpenAI 兼容服务")
 
     def _save_cover_file(
         self,

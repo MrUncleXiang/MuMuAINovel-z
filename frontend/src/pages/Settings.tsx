@@ -360,6 +360,7 @@ export default function SettingsPage() {
     },
     { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     { value: 'grok', label: 'Grok', defaultUrl: 'https://api.x.ai/v1' },
+    { value: 'custom', label: '自定义（OpenAI 兼容）', defaultUrl: 'https://api.openai.com/v1', defaultModel: '' },
   ];
 
   const handleCoverProviderChange = (value: string) => {
@@ -1777,7 +1778,11 @@ export default function SettingsPage() {
                               }))}
                             />
                           ) : (
-                            <Input size={isMobile ? 'middle' : 'large'} placeholder={selectedCoverProvider === 'grok' ? 'https://api.x.ai/v1' : 'https://generativelanguage.googleapis.com/v1beta'} />
+                            <Input size={isMobile ? 'middle' : 'large'} placeholder={
+                            selectedCoverProvider === 'grok' ? 'https://api.x.ai/v1'
+                              : selectedCoverProvider === 'custom' ? 'https://你的服务地址/v1（OpenAI 兼容 images/generations）'
+                              : 'https://generativelanguage.googleapis.com/v1beta'
+                          } />
                           )}
                         </Form.Item>
 
@@ -1788,7 +1793,9 @@ export default function SettingsPage() {
                               ? '选择地址后自动填入推荐模型'
                               : selectedCoverProvider === 'grok'
                                 ? 'grok-2-image'
-                                : 'gemini-2.0-flash-exp-image-generation'}
+                                : selectedCoverProvider === 'custom'
+                                  ? '填你的生图模型名（如 gpt-image-1）'
+                                  : 'gemini-2.0-flash-exp-image-generation'}
                           />
                         </Form.Item>
 
