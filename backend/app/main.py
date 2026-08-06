@@ -77,8 +77,33 @@ async def lifespan(app: FastAPI):
                 )
             )
         logger.info("后台任务表检查完成")
+
     except Exception as e:
         logger.warning(f"后台任务表检查失败（不影响启动）: {e}")
+
+    # 启动恢复：把容器重启前 running 的流水线标记为 paused（循环进程已随重启消失）
+    try:
+        from sqlalchemy import select, update as sa_update
+        from app.models.novel_pipeline import NovelPipeline, PipelineStatus
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        _engine = await get_engine("system")
+        _factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+        async with _factory() as _sess:
+            _rows = list((await _sess.execute(
+                select(NovelPipeline).where(NovelPipeline.status == PipelineStatus.RUNNING)
+            )).scalars().all())
+            if _rows:
+                await _sess.execute(
+                    sa_update(NovelPipeline)
+                    .where(NovelPipeline.status == PipelineStatus.RUNNING)
+                    .values(status=PipelineStatus.PAUSED,
+                            last_error="容器重启，流水线已暂停，请在驾驶舱手动恢复")
+                )
+                await _sess.commit()
+                logger.info(f"启动恢复：{len(_rows)} 条运行中流水线标记为暂停")
+    except Exception as e:
+        logger.warning(f"启动恢复流水线状态失败: {e}")
 
     logger.info("应用启动完成")
     

@@ -63,7 +63,7 @@ def default_pipeline_config() -> dict:
         "budget": {"max_amount_cents": 3000, "max_tokens": 0},  # 默认预算 ¥30
         "params": {                        # 每阶段生成参数（用户可调）
             "book": {"temperature": 0.8, "max_tokens": 32000},
-            "chapter": {"temperature": 0.8, "max_tokens": 32000, "target_word_count": 3000},
+            "chapter": {"temperature": 0.8, "max_tokens": 12000, "target_word_count": 2500},
             "analysis": {"temperature": 0.3, "max_tokens": 8000},
             "volume_transition": {"temperature": 0.8, "max_tokens": 32000},
         },
@@ -427,6 +427,7 @@ async def _run_pipeline_loop(
 
                     # 生成该章节（复用现有后台生成逻辑），空内容/失败自动重试
                     ok, err = False, ""
+                    content_ok = False
                     for attempt in range(1, 4):
                         ok, err = await _generate_one_chapter(db, pipeline, chapter, user_id)
                         if not ok:
@@ -435,14 +436,17 @@ async def _run_pipeline_loop(
                         # 校验内容非空（推理型模型可能在 token 上限内只输出思考）
                         fresh = await db.get(Chapter, chapter.id)
                         if fresh and (fresh.content or "").strip():
+                            content_ok = True
                             break
-                        err = "生成结果为空（模型只输出了思考内容），重试"
+                        err = "生成结果为空（模型只输出了思考内容）"
                         chapter.status = ChapterStatus.PENDING
                         await db.commit()
                         await asyncio.sleep(5 * attempt)
-                    if not ok:
+                    if not content_ok:
+                        # 空内容/失败 3 次后必须终止，避免死循环烧钱
                         chapter.status = ChapterStatus.FAILED
-                        pipeline.last_error = err
+                        pipeline.status = PipelineStatus.PAUSED
+                        pipeline.last_error = f"第{chapter.chapter_number}章连续生成失败/空内容：{err}"
                         await db.commit()
                         return
 
