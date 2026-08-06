@@ -4658,7 +4658,7 @@ async def generate_single_chapter_for_batch(
     # 🔢 计算 max_tokens 限制（批量生成）
     # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
     # 同时设置上限防止过长，下限确保基本可用
-    explicit_max = task_input.get("max_tokens")
+    explicit_max = None  # 批量生成无 task_input；如需可加 max_tokens 参数
     if explicit_max:
         calculated_max_tokens = max(2000, min(int(explicit_max), 16000))
     else:
@@ -4714,9 +4714,13 @@ async def generate_single_chapter_for_batch(
     
     # 更新章节内容到数据库（使用锁保护）
     async with write_lock:
+        # 空内容/字数过短校验（推理型模型可能在 token 上限内只输出思考）
+        new_word_count = len(full_content)
+        if new_word_count < int(target_word_count * 0.7):
+            logger.warning(f"  批量生成 - 章节内容过短({new_word_count}字 < 目标{target_word_count}的70%)，触发重试")
+            raise ValueError(f"章节内容过短({new_word_count}字)，未达目标字数的70%")
         old_word_count = chapter.word_count or 0
         chapter.content = full_content
-        new_word_count = len(full_content)
         chapter.word_count = new_word_count
         chapter.status = "completed"
         chapter.summary = _build_lightweight_chapter_summary(full_content)
