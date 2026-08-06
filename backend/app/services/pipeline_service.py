@@ -356,9 +356,19 @@ async def _run_pipeline_loop(
                     volume_chapters = int((cfg.get("volume_chapters") or 10))
                     if not existing:
                         try:
-                            await _generate_and_apply_new_volume(
-                                db, pipeline, user_id, existing, volume_chapters,
+                            # 一键建书：先世界设定+角色，再卷1大纲+章节骨架（失败自动重试）
+                            await _generate_world_and_characters(db, pipeline, user_id)
+                            await _with_retry(
+                                lambda: _generate_and_apply_new_volume(
+                                    db, pipeline, user_id, existing, volume_chapters,
+                                ),
+                                retries=2, label="卷1大纲生成",
                             )
+                            # 一键建书完成：标记项目向导状态为完成，避免点击项目被拉回向导页
+                            project = await db.get(Project, pipeline.project_id)
+                            if project is not None and project.wizard_status != "completed":
+                                project.wizard_status = "completed"
+                                project.wizard_step = 4
                         except PipelineStateError as exc:
                             pipeline.status = PipelineStatus.PAUSED
                             pipeline.last_error = f"一键建书失败：{exc}"
@@ -1078,3 +1088,113 @@ async def _generate_and_apply_new_volume(
     await db.flush()
     pipeline.current_outline_id = new_outline.id
     pipeline.current_stage = PipelineStage.CHAPTER_LOOP
+
+
+async def _generate_world_and_characters(db: AsyncSession, pipeline: NovelPipeline, user_id: str) -> None:
+    """一键建书第 0 步：若项目缺世界设定/角色，先自动生成（非 SSE）。"""
+    from app.models.character import Character
+    from app.services.prompt_service import PromptService
+    from app.services.ai_provider_service import create_routed_ai_service
+    from app.services.json_helper import loads_json
+
+    project = await db.get(Project, pipeline.project_id)
+    if project is None:
+        return
+
+    cfg = pipeline.config_snapshot or {}
+    book_cfg = (cfg.get("models") or {}).get("book") or {}
+    params = (cfg.get("params") or {}).get("book") or {}
+
+    # 1) 世界设定：world_* 字段为空才生成
+    needs_world = not (project.world_time_period or "").strip()
+    if needs_world:
+        template = await PromptService.get_template("WORLD_BUILDING", user_id, db)
+        prompt = PromptService.format_prompt(
+            template,
+            title=project.title or "未命名",
+            theme=project.theme or "未设定",
+            genre=project.genre or "通用类型",
+            description=project.description or "暂无简介",
+        )
+        service = await create_routed_ai_service(
+            db, user_id=user_id, usage_type="world_building",
+            provider_config_id=book_cfg.get("provider_config_id"), model=book_cfg.get("model"),
+            project_id=pipeline.project_id, task_trace_id=f"pipeline-{pipeline.id[:8]}", enable_mcp=False,
+        )
+        result = await service.generate_text(
+            prompt=prompt, temperature=params.get("temperature", 0.8),
+            max_tokens=params.get("max_tokens", 32000), auto_mcp=False,
+        )
+        raw = result.get("content", "") if isinstance(result, dict) else str(result)
+        world = loads_json(raw)
+        if isinstance(world, dict):
+            project.world_time_period = world.get("time_period") or project.world_time_period
+            project.world_location = world.get("location") or project.world_location
+            project.world_atmosphere = world.get("atmosphere") or project.world_atmosphere
+            project.world_rules = world.get("rules") or project.world_rules
+            await db.flush()
+
+    # 2) 角色：项目无角色才生成
+    existing_chars = await db.scalar(
+        select(func.count(Character.id)).where(Character.project_id == pipeline.project_id)
+    ) or 0
+    if existing_chars > 0:
+        return
+    count = int((cfg.get("character_count") or 5))
+    template = await PromptService.get_template("CHARACTERS_BATCH_GENERATION", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title or "未命名",
+        theme=project.theme or "未设定",
+        genre=project.genre or "通用",
+        count=count,
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        narrative_perspective=project.narrative_perspective or "第三人称",
+        requirements="",
+    )
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="character",
+        provider_config_id=book_cfg.get("provider_config_id"), model=book_cfg.get("model"),
+        project_id=pipeline.project_id, task_trace_id=f"pipeline-{pipeline.id[:8]}", enable_mcp=False,
+    )
+    result = await service.generate_text(
+        prompt=prompt, temperature=params.get("temperature", 0.8),
+        max_tokens=params.get("max_tokens", 32000), auto_mcp=False,
+    )
+    raw = result.get("content", "") if isinstance(result, dict) else str(result)
+    data = loads_json(raw)
+    chars = data if isinstance(data, list) else data.get("characters", []) if isinstance(data, dict) else []
+    for c in chars[: count + 3]:
+        if not isinstance(c, dict) or not c.get("name"):
+            continue
+        db.add(Character(
+            id=str(uuid.uuid4()),
+            project_id=pipeline.project_id,
+            name=c.get("name"),
+            age=str(c.get("age") or "") if c.get("age") else None,
+            gender=c.get("gender"),
+            role_type=c.get("role_type") or "supporting",
+            personality=c.get("personality") or "",
+            background=c.get("backstory") or c.get("background") or "",
+            appearance=c.get("appearance") or "",
+        ))
+    await db.flush()
+
+
+async def _with_retry(coro_factory, *, retries: int = 2, label: str = "生成"):
+    """带重试地执行一个异步操作（供应商偶发失败时自动重试）。"""
+    import asyncio as _asyncio
+
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return await coro_factory()
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt < retries:
+                logger.warning(f"{label}失败（第{attempt + 1}次）：{exc}，{_asyncio.sleep and 8 * (attempt + 1)}秒后重试")
+                await _asyncio.sleep(8 * (attempt + 1))
+    raise last_exc  # type: ignore[misc]
