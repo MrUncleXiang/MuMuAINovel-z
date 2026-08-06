@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Button, Card, Form, Input, List, Modal, Popconfirm, Select, Space, Tag, Typography, message,
 } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { CloudDownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { themeTemplateApi } from '../services/api';
 import type { ThemeTemplate } from '../types';
 
@@ -13,6 +13,8 @@ export default function ThemeTemplates() {
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [draft, setDraft] = useState<Partial<ThemeTemplate> | null>(null);
+  const [fcOpen, setFcOpen] = useState(false);
+  const [fcBusy, setFcBusy] = useState(false);
   const [form] = Form.useForm();
 
   const refresh = useCallback(async () => {
