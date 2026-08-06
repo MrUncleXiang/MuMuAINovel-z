@@ -3924,6 +3924,20 @@ async def batch_compare_chapters(
     if not target:
         raise HTTPException(status_code=404, detail="指定范围内没有章节")
 
+    # 登记批量对比任务（复用批量任务表，task_type=batch_compare，前端悬浮任务框可查看进度）
+    compare_task = BatchGenerationTask(
+        project_id=project_id, user_id=user_id, task_type="batch_compare",
+        start_chapter_number=payload.start_chapter_number, chapter_count=len(target),
+        chapter_ids=[ch.id for ch in target],
+        style_id=payload.style_id, target_word_count=payload.target_word_count,
+        enable_analysis=False, status="running", total_chapters=len(target),
+        completed_chapters=0, failed_chapters=[], max_retries=0,
+        started_at=datetime.now(),
+    )
+    db.add(compare_task)
+    await db.commit()
+    await db.refresh(compare_task)
+
     engine = await get_engine(user_id)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     created_batches = []
@@ -3950,6 +3964,7 @@ async def batch_compare_chapters(
         created_batches.append({"chapter_number": chapter.chapter_number, "chapter_id": chapter.id, "batch_id": batch.id})
 
     return {
+        "task_id": compare_task.id,
         "message": f"已创建 {len(created_batches)} 章的对比任务（每章 {len(payload.selections)} 个候选）",
         "batches": created_batches,
     }
@@ -4094,7 +4109,47 @@ async def get_batch_generation_status(
     
     if not task:
         raise HTTPException(status_code=404, detail="批量生成任务不存在")
-    
+
+    # batch_compare：按各章对比批次候选进度实时汇总
+    if (task.task_type or "batch_generate") == "batch_compare":
+        from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
+        chapter_ids = task.chapter_ids or []
+        done_chapters = 0
+        failed_chapters = []
+        any_running = False
+        for cid in chapter_ids:
+            batch = await db.scalar(
+                select(LLMComparisonBatch)
+                .where(LLMComparisonBatch.target_type == "chapter", LLMComparisonBatch.target_id == cid)
+                .order_by(LLMComparisonBatch.created_at.desc()).limit(1)
+            )
+            if batch is None:
+                any_running = True
+                continue
+            cands = list((await db.scalars(
+                select(LLMComparisonCandidate.status).where(LLMComparisonCandidate.batch_id == batch.id)
+            )).all())
+            if not cands:
+                any_running = True
+                continue
+            if all(c in ("success", "failed") for c in cands):
+                if any(c == "failed" for c in cands):
+                    failed_chapters.append(cid)
+                done_chapters += 1
+            else:
+                any_running = True
+        task.completed_chapters = done_chapters
+        task.failed_chapters = failed_chapters
+        if done_chapters >= len(chapter_ids):
+            task.status = "completed"
+            task.completed_at = datetime.now()
+        elif not any_running and done_chapters < len(chapter_ids):
+            task.status = "failed"
+            task.error_message = "部分章节候选生成失败"
+        else:
+            task.status = "running"
+        await db.commit()
+
     return BatchGenerateStatusResponse(
         batch_id=task.id,
         status=task.status,

@@ -1365,7 +1365,19 @@ export default function Chapters() {
           throw new Error(err.detail || '创建批量对比任务失败');
         }
         const data = await resp.json();
-        message.success(data.message || '批量对比任务已创建');
+        // 登记到悬浮任务框查看进度
+        if (data.task_id) {
+          setBatchTaskId(data.task_id);
+          setBatchProgress({
+            status: 'running',
+            total: values.count,
+            completed: 0,
+            current_chapter_number: values.startChapterNumber,
+          });
+          startBatchPolling(data.task_id);
+          eventBus.emit('background-task-created');
+        }
+        message.success(data.message || '批量对比任务已创建（右下角任务面板查看进度）');
         console.log('[批量对比] 创建结果:', data);
         return;
       } catch (error: any) {

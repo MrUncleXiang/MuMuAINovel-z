@@ -14,6 +14,7 @@ class BatchGenerationTask(Base):
     user_id = Column(String(100), nullable=False, comment="用户ID")
     
     # 任务配置
+    task_type = Column(String(20), default="batch_generate", comment="任务类型: batch_generate/batch_compare")
     start_chapter_number = Column(Integer, nullable=False, comment="起始章节序号")
     chapter_count = Column(Integer, nullable=False, comment="生成章节数量")
     chapter_ids = Column(JSON, nullable=False, comment="待生成的章节ID列表")
