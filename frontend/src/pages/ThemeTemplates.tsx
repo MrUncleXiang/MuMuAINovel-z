@@ -56,9 +56,14 @@ export default function ThemeTemplates() {
     <div style={{ padding: 24, maxWidth: 900 }}>
       <Space style={{ width: '100%', justifyContent: 'space-between' }}>
         <Title level={3} style={{ marginBottom: 8 }}>题材模板库</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setAnalyzeOpen(true)}>
-          从示例提炼模板
-        </Button>
+        <Space>
+          <Button icon={<CloudDownloadOutlined />} onClick={() => setFcOpen(true)}>
+            从榜单自动采集
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAnalyzeOpen(true)}>
+            从示例提炼模板
+          </Button>
+        </Space>
       </Space>
       <Paragraph type="secondary">
         给几个你喜欢的示例（书名/链接/简介），AI 提炼出热门题材模板；之后在创建小说时可以直接选用，一键开书。
@@ -90,6 +95,42 @@ export default function ThemeTemplates() {
           </List.Item>
         )}
       />
+
+      <Modal
+        open={fcOpen}
+        title="从榜单自动采集热门题材"
+        onCancel={() => setFcOpen(false)}
+        footer={null}
+        width={560}
+      >
+        <Form
+          layout="vertical"
+          onFinish={async (v) => {
+            setFcBusy(true);
+            try {
+              const r = await themeTemplateApi.importFirecrawl({ url: v.url, limit: v.limit || 5 });
+              message.success(`成功导入 ${r.imported} 套模板`);
+              setFcOpen(false);
+              refresh();
+            } catch (e: any) {
+              message.error(e?.response?.data?.detail || '采集失败');
+            } finally {
+              setFcBusy(false);
+            }
+          }}
+        >
+          <Form.Item name="url" label="榜单页 URL" rules={[{ required: true, message: '请输入榜单页链接' }]}
+            extra="支持番茄/起点等平台的排行榜页面，如 https://fanqienovel.com/rank">
+            <Input placeholder="https://fanqienovel.com/rank/1_2_1141" />
+          </Form.Item>
+          <Form.Item name="limit" label="提炼模板数量" initialValue={5}>
+            <Select options={[1, 2, 3, 5, 8, 10].map(n => ({ value: n, label: `${n} 套` }))} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={fcBusy} block>
+            开始采集（约 1-2 分钟）
+          </Button>
+        </Form>
+      </Modal>
 
       <Modal
         open={analyzeOpen}

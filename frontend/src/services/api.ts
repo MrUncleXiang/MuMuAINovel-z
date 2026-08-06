@@ -423,6 +423,8 @@ export const themeTemplateApi = {
     api.post<unknown, ThemeTemplate>('/theme-templates', data),
   remove: (id: string) => api.delete(`/theme-templates/${id}`),
   use: (id: string) => api.post<unknown, ThemeTemplate>(`/theme-templates/${id}/use`),
+  importFirecrawl: (data: { url: string; limit?: number }) =>
+    api.post<unknown, { imported: number; templates: ThemeTemplate[] }>('/theme-templates/import-firecrawl', data, { timeout: 300000 } as ToastAwareRequestConfig),
 };
 
 export const projectApi = {
