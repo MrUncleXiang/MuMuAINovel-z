@@ -30,6 +30,25 @@ COVER_HEIGHT = 1536
 GENERATED_COVER_STORAGE_DIR = PROJECT_ROOT / "storage" / "generated_covers"
 GENERATED_COVER_PUBLIC_PREFIX = "/generated-assets/covers"
 
+# 分辨率档位 → (宽, 高)
+COVER_SIZE_PRESETS: dict[str, tuple[int, int]] = {
+    "1k": (768, 1024),
+    "2k": (1024, 1536),
+    "4k": (1536, 2304),
+}
+
+
+def resolve_cover_size(size_value: str | None) -> tuple[int, int]:
+    """把用户配置的分辨率档位/尺寸解析为 (宽, 高)。auto = 标准封面 1024x1536。"""
+    value = (size_value or "auto").strip().lower()
+    if value in COVER_SIZE_PRESETS:
+        return COVER_SIZE_PRESETS[value]
+    if "x" in value:
+        parts = value.split("x")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return int(parts[0]), int(parts[1])
+    return COVER_WIDTH, COVER_HEIGHT
+
 
 @dataclass
 class CoverTestResult:
@@ -59,6 +78,7 @@ class CoverGenerationService:
         if project.cover_status == "ready" and project.cover_image_url and not overwrite:
             raise HTTPException(status_code=400, detail="当前项目已存在封面，如需覆盖请传入 overwrite=true")
 
+        width, height = resolve_cover_size(getattr(settings, "cover_image_size", None))
         prompt = await PromptService.build_novel_cover_prompt(
             project,
             user_id=user_id,
@@ -74,9 +94,10 @@ class CoverGenerationService:
             provider = self._build_provider(settings)
             result = await provider.generate_cover(
                 prompt=prompt,
+                width=width,
+                height=height,
                 model=settings.cover_image_model or "",
-                width=COVER_WIDTH,
-                height=COVER_HEIGHT,
+
             )
             image_url = self._save_cover_file(
                 user_id=user_id,

@@ -96,6 +96,7 @@ export default function SettingsPage() {
         cover_api_key: settings.cover_api_key ?? defaultCoverSettings.cover_api_key,
         cover_api_base_url: settings.cover_api_base_url || defaultCoverSettings.cover_api_base_url,
         cover_image_model: settings.cover_image_model || defaultCoverSettings.cover_image_model,
+        cover_image_size: settings.cover_image_size || defaultCoverSettings.cover_image_size,
         cover_enabled: settings.cover_enabled ?? defaultCoverSettings.cover_enabled,
       });
 
@@ -304,6 +305,7 @@ export default function SettingsPage() {
     cover_api_key: '',
     cover_api_base_url: mumuCoverBaseUrlOptions[0].value,
     cover_image_model: mumuCoverBaseUrlOptions[0].defaultModel,
+    cover_image_size: 'auto',
   };
 
   const apiProviders = [
@@ -1797,6 +1799,15 @@ export default function SettingsPage() {
                                   ? '填你的生图模型名（如 gpt-image-1）'
                                   : 'gemini-2.0-flash-exp-image-generation'}
                           />
+                        </Form.Item>
+
+                        <Form.Item label="封面分辨率" name="cover_image_size">
+                          <Select size={isMobile ? 'middle' : 'large'} options={[
+                            { value: 'auto', label: '自动（1024×1536，超预算自动降级）' },
+                            { value: '1k', label: '1K（768×1024）' },
+                            { value: '2k', label: '2K（1024×1536）' },
+                            { value: '4k', label: '4K（1536×2304）' },
+                          ]} />
                         </Form.Item>
 
                         {coverTestResult && (

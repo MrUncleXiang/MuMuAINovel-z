@@ -24,6 +24,7 @@ class Settings(Base):
     cover_api_key = Column(String(500), comment="封面图片API密钥")
     cover_api_base_url = Column(String(500), comment="封面图片自定义API地址")
     cover_image_model = Column(String(100), comment="封面图片模型名称")
+    cover_image_size = Column(String(20), default="auto", comment="封面分辨率档位: auto/1k/2k/4k 或 宽x高")
     cover_enabled = Column(Boolean, default=False, server_default="0", nullable=False, comment="是否启用封面图片生成")
 
     # 系统级 SMTP 配置（仅管理员维护）

@@ -85,6 +85,7 @@ export interface Settings {
   cover_api_key?: string;
   cover_api_base_url?: string;
   cover_image_model?: string;
+  cover_image_size?: string;
   cover_enabled?: boolean;
   preferences?: string;
   created_at: string;
@@ -103,6 +104,7 @@ export interface SettingsUpdate {
   cover_api_key?: string;
   cover_api_base_url?: string;
   cover_image_model?: string;
+  cover_image_size?: string;
   cover_enabled?: boolean;
   preferences?: string;
 }
