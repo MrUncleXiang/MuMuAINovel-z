@@ -81,6 +81,8 @@ export default function Chapters() {
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
   const [batchSelectedProvider, setBatchSelectedProvider] = useState<string | undefined>(); // 批量生成的 AI 服务配置
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
+  const [batchMode, setBatchMode] = useState<'single' | 'compare'>('single'); // 批量生成方式
+  const [batchComparisonSelections, setBatchComparisonSelections] = useState<LLMComparisonSelection[]>([]); // 批量多模型选择
   const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
   const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string }>>([]);
@@ -838,6 +840,17 @@ export default function Chapters() {
       form.setFieldsValue(chapter);
       setEditingId(id);
       setIsModalOpen(true);
+      // 异步加载该章最近的对比批次（批量多模型对比生成的批次也能在此查看）
+      llmComparisonApi.list({ target_type: 'chapter', target_id: id, limit: 1 })
+        .then(res => {
+          if (res.items && res.items.length > 0) {
+            const latest = res.items[0];
+            if (latest.status !== 'draft') {
+              setComparisonBatch(latest);
+            }
+          }
+        })
+        .catch(() => { /* 无批次则忽略 */ });
     }
   };
 
@@ -1325,6 +1338,43 @@ export default function Chapters() {
     model?: string;
   }) => {
     if (!currentProject?.id) return;
+
+    // 多模型对比批量模式
+    if (batchMode === 'compare') {
+      if (batchComparisonSelections.length < 2) {
+        message.warning('请选择至少 2 个模型用于对比');
+        return;
+      }
+      try {
+        setBatchGenerating(true);
+        setBatchGenerateVisible(false);
+        const resp = await fetch(`/api/chapters/project/${currentProject.id}/batch-compare`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            start_chapter_number: values.startChapterNumber,
+            count: values.count,
+            selections: batchComparisonSelections,
+            style_id: values.styleId || selectedStyleId || undefined,
+            target_word_count: values.targetWordCount || targetWordCount,
+            enable_mcp: false,
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || '创建批量对比任务失败');
+        }
+        const data = await resp.json();
+        message.success(data.message || '批量对比任务已创建');
+        console.log('[批量对比] 创建结果:', data);
+        return;
+      } catch (error: any) {
+        message.error(error.message || '创建批量对比任务失败');
+        return;
+      } finally {
+        setBatchGenerating(false);
+      }
+    }
 
     // 调试日志
     console.log('[批量生成] 表单values:', values);
@@ -3230,6 +3280,33 @@ export default function Chapters() {
                 />
               </Form.Item>
             </div>
+
+            {/* 生成方式：单模型批量 / 多模型对比批量 */}
+            <Form.Item label="生成方式" style={{ marginBottom: 12 }}>
+              <Segmented
+                block
+                value={batchMode}
+                options={[
+                  { label: '单模型批量', value: 'single' },
+                  { label: '多模型对比批量', value: 'compare' },
+                ]}
+                onChange={value => setBatchMode(value as 'single' | 'compare')}
+                disabled={batchGenerating}
+              />
+            </Form.Item>
+            {batchMode === 'compare' && (
+              <Form.Item
+                label="选择模型（每章并行生成候选，生成后逐章对比采用）"
+                tooltip="每个模型都会为每章生成一版候选；注意 token 消耗为模型数倍"
+                style={{ marginBottom: 12 }}
+              >
+                <LLMMultiSelector
+                  value={batchComparisonSelections}
+                  onChange={setBatchComparisonSelections}
+                  disabled={batchGenerating}
+                />
+              </Form.Item>
+            )}
 
             {/* 第三行：AI 服务 + AI模型 + Skill */}
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 0 : 16 }}>

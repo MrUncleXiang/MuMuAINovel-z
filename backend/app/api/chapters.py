@@ -1,11 +1,12 @@
 """章节管理API"""
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, BackgroundTasks
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, timedelta
 from asyncio import Queue, Lock
 
@@ -28,6 +29,7 @@ from app.models.memory import PlotAnalysis, StoryMemory
 from app.models.batch_generation_task import BatchGenerationTask
 from app.models.regeneration_task import RegenerationTask
 from app.models.background_task import BackgroundTask
+from app.schemas.llm_comparison import LLMComparisonSelection
 from app.schemas.chapter import (
     ChapterCreate,
     ChapterUpdate,
@@ -3882,6 +3884,75 @@ def calculate_estimated_time(
     total_time = chapter_count * (generation_time_per_chapter + analysis_time_per_chapter)
     
     return max(1, int(total_time))
+
+
+class BatchCompareRequest(BaseModel):
+    """批量多模型对比：范围内每章用所选服务各生成一版候选。"""
+    start_chapter_number: int = Field(..., description="起始章节序号")
+    count: int = Field(..., description="章节数量", ge=1, le=10)
+    selections: List[LLMComparisonSelection] = Field(..., min_length=2, max_length=4)
+    style_id: Optional[int] = None
+    target_word_count: int = Field(2500, ge=500, le=10000)
+    enable_mcp: bool = False
+    narrative_perspective: Optional[str] = None
+    skill_key: Optional[str] = None
+
+
+@router.post("/project/{project_id}/batch-compare", summary="批量多模型对比生成（每章多版本候选）")
+async def batch_compare_chapters(
+    project_id: str,
+    payload: BatchCompareRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """范围内每章创建一个多模型对比批次，后台并行生成候选，用户在章节对比界面审阅采用。"""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    await verify_project_access(project_id, user_id, db)
+
+    result = await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.chapter_number)
+    )
+    all_chapters = result.scalars().all()
+    target = [
+        ch for ch in all_chapters
+        if payload.start_chapter_number <= ch.chapter_number < payload.start_chapter_number + payload.count
+    ]
+    if not target:
+        raise HTTPException(status_code=404, detail="指定范围内没有章节")
+
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    created_batches = []
+    for chapter in target:
+        try:
+            batch, _ = await create_chapter_comparison(
+                db, chapter=chapter, user_id=user_id,
+                request=ChapterComparisonCreateRequest(
+                    selections=[item.model_dump() for item in payload.selections],
+                    style_id=payload.style_id,
+                    target_word_count=payload.target_word_count,
+                    enable_mcp=payload.enable_mcp,
+                    narrative_perspective=payload.narrative_perspective,
+                    skill_key=payload.skill_key,
+                ),
+            )
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=f"第{chapter.chapter_number}章：{exc}")
+        _schedule_comparison_background(run_batch(
+            session_factory, batch_id=batch.id, user_id=user_id,
+            generate=generate_chapter_candidate, concurrency=2,
+        ))
+        created_batches.append({"chapter_number": chapter.chapter_number, "chapter_id": chapter.id, "batch_id": batch.id})
+
+    return {
+        "message": f"已创建 {len(created_batches)} 章的对比任务（每章 {len(payload.selections)} 个候选）",
+        "batches": created_batches,
+    }
 
 
 @router.post("/project/{project_id}/batch-generate", response_model=BatchGenerateResponse, summary="批量顺序生成章节内容")
