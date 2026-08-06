@@ -1519,6 +1519,7 @@ async def adopt_analysis_comparison_candidate(chapter_id: str, batch_id: str, ca
         if batch.target_type != "analysis" or batch.target_id != chapter_id:
             raise ComparisonNotFoundError("分析候选不存在")
         batch, _ = await adopt_candidate(db, batch_id=batch_id, candidate_id=candidate_id, user_id=user_id, apply_target=apply_analysis_candidate)
+        await db.refresh(batch)  # 采用后属性已过期，刷新避免响应构建惰性加载报错
         return await _chapter_comparison_response(db, batch)
     except (ComparisonNotFoundError, ComparisonStateError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -1604,6 +1605,7 @@ async def adopt_chapter_comparison_candidate(
             db, batch_id=batch_id, candidate_id=candidate_id,
             user_id=user_id, apply_target=apply_chapter_candidate,
         )
+        await db.refresh(batch)  # 采用后属性已过期，刷新避免响应构建惰性加载报错
         return await _chapter_comparison_response(db, batch)
     except ComparisonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

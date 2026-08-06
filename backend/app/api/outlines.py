@@ -1898,6 +1898,7 @@ async def adopt_outline_candidate(
             db, batch_id=batch_id, candidate_id=candidate_id,
             user_id=user_id, apply_target=apply_outline_candidate,
         )
+        await db.refresh(batch)  # 采用后属性已过期，刷新避免响应构建惰性加载报错
         return await _outline_comparison_response(db, batch)
     except ComparisonNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

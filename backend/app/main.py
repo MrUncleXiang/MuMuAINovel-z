@@ -131,20 +131,32 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """处理请求验证错误"""
+    """处理请求验证错误（错误详情含不可序列化的异常对象时转为字符串，避免 500）"""
     logger.error(f"请求验证失败: {exc.errors()}")
+    try:
+        import json as _json
+        clean_errors = _json.loads(_json.dumps(exc.errors(), default=str))
+    except Exception:
+        clean_errors = [{"msg": "请求参数验证失败"}]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "detail": "请求参数验证失败",
-            "errors": exc.errors()
+            "errors": clean_errors
         }
     )
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """处理所有未捕获的异常"""
+    """处理所有未捕获的异常（完整堆栈落盘，便于排查日志截断的问题）"""
     logger.error(f"未处理的异常: {type(exc).__name__}: {str(exc)}", exc_info=True)
+    try:
+        import traceback as _tb
+        with open("/app/logs/unhandled_errors.log", "a") as _f:
+            _f.write(f"=== {datetime.now().isoformat()} {type(exc).__name__}: {exc}\n")
+            _tb.print_exc(file=_f)
+    except Exception:
+        pass
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
