@@ -152,3 +152,19 @@
 ### Status
 
 [OK] **Completed**
+
+---
+
+## 2026-08-06 经验：建书/测试数据完整性（"图省事"教训）
+
+**问题**：用 API 建《暗潮香江-DeepSeek对比测试》书时只传了 title/genre/theme，漏了 description 和世界观/角色。后果：① 点进项目被拉回向导页报"缺必需参数"；② DeepSeek 写正文时没有世界观/角色可参考（裸写）；③ 对比不公平（同标题不同设定）。
+
+**根因**：a) 建项目字段不全无兜底；b) 流水线 BOOK 阶段"有大纲就跳过补全世界/角色"的逻辑漏洞；c) 对比测试复制数据不完整。
+
+**修复（机制层）**：
+- start_pipeline 启动即标记 wizard_status=completed + description 用 theme 兜底
+- BOOK 阶段无论有无大纲都检查并补全世界设定/角色（_generate_world_and_characters）
+- 世界设定 4 字段缺失重试 3 次 + 兜底值，绝不留空
+- 对比测试书补齐原版世界观 + 93 个角色
+
+**沉淀**：`.rudder/spec/guides/pipeline-data-integrity-guide.md` + AGENTS.md 规则 + 本日志。

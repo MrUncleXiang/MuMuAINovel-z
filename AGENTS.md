@@ -47,6 +47,10 @@ wayfinder 地图走完后：
 - 不要为单个小改动启动 wayfinder；wayfinder 只用于跨会话的大项目。
 <!-- MATT-SKILLS:END -->
 
+## 建书数据完整性（必读）
+
+创建项目、一键开书、建测试/演示/对比数据时，必须保证一本书的"完整设定"齐全：**项目 4 字段（含简介）、世界观 4 字段、角色、大纲**；对比测试必须完整复制原版设定（世界观+角色+大纲+标题），否则对比不公平。详见 `.rudder/spec/guides/pipeline-data-integrity-guide.md`。
+
 ## Agent skills
 
 ### Issue tracker

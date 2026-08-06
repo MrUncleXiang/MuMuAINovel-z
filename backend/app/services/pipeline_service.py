@@ -161,6 +161,14 @@ async def start_pipeline(
         await loop_db.commit()
 
     pipeline = await get_pipeline(db, pipeline.id, user_id)
+    # 流水线接管后：项目不再走向导页（标记完成）；缺简介用主题兜底
+    project_row = await db.get(Project, project_id)
+    if project_row is not None:
+        if not (project_row.description or "").strip():
+            project_row.description = project_row.theme or "（未填写简介）"
+        project_row.wizard_status = "completed"
+        project_row.wizard_step = 4
+        await db.commit()
     _spawn_loop(await _session_factory_for(user_id), pipeline.id, user_id)
     return pipeline
 
@@ -347,17 +355,22 @@ async def _run_pipeline_loop(
                     return
 
                 if pipeline.current_stage == PipelineStage.BOOK:
-                    # 一键建书：若项目还没有大纲，AI 生成第 1 卷大纲 + 章节骨架
+                    # 一键建书：无论是否有大纲，先确保世界观+角色齐全（缺则自动补全），
+                    # 没有大纲时再生成卷 1 大纲 + 章节骨架
                     existing = list((await db.scalars(
                         select(Outline).where(Outline.project_id == pipeline.project_id)
                         .order_by(Outline.order_index)
                     )).all())
                     cfg = pipeline.config_snapshot or {}
                     volume_chapters = int((cfg.get("volume_chapters") or 10))
+                    try:
+                        # 世界设定/角色缺失时自动补全（含"有大纲但设定空"的情况）
+                        await _generate_world_and_characters(db, pipeline, user_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(f"自动补全世界设定/角色失败（不影响推进）: {exc}")
                     if not existing:
                         try:
-                            # 一键建书：先世界设定+角色，再卷1大纲+章节骨架（失败自动重试）
-                            await _generate_world_and_characters(db, pipeline, user_id)
+                            # 卷1大纲+章节骨架（失败自动重试）
                             await _with_retry(
                                 lambda: _generate_and_apply_new_volume(
                                     db, pipeline, user_id, existing, volume_chapters,
