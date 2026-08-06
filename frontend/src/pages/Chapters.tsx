@@ -9,8 +9,8 @@ import AIServiceSelector, { type AIServiceSelection } from '../components/AIServ
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
-import { projectApi, writingStyleApi, chapterApi, llmComparisonApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
+import { projectApi, writingStyleApi, chapterApi, llmComparisonApi, aiProviderApi } from '../services/api';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection , AIProviderConfig} from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -67,6 +67,7 @@ export default function Chapters() {
   const [selectedStyleId, setSelectedStyleId] = useState<number | undefined>();
   const [targetWordCount, setTargetWordCount] = useState<number>(getCachedWordCount);
   const [availableModels, setAvailableModels] = useState<Array<{ value: string, label: string }>>([]);
+  const [batchProviderModels, setBatchProviderModels] = useState<Array<{ value: string, label: string }>>([]); // 所选服务的模型
   const [selectedModel, setSelectedModel] = useState<string | undefined>();
   const [aiServiceSelection, setAIServiceSelection] = useState<AIServiceSelection>({});
   const [generationMode, setGenerationMode] = useState<'single' | 'compare'>('single');
@@ -78,6 +79,8 @@ export default function Chapters() {
   const [candidateDiffVisible, setCandidateDiffVisible] = useState(false);
   const [candidateDiffIds, setCandidateDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
+  const [batchSelectedProvider, setBatchSelectedProvider] = useState<string | undefined>(); // 批量生成的 AI 服务配置
+  const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
   const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string }>>([]);
@@ -576,6 +579,17 @@ export default function Chapters() {
     }
     return null;
   };
+
+  // 加载自定义 AI 服务配置（供批量生成选择服务）
+  const loadProviders = async () => {
+    try {
+      const list = await aiProviderApi.list();
+      setProviders(list);
+    } catch {
+      console.log('加载 AI 服务列表失败');
+    }
+  };
+  useEffect(() => { loadProviders(); }, []);
 
   // 检查并恢复批量生成任务
   const checkAndRestoreBatchTask = async () => {
@@ -1341,6 +1355,7 @@ export default function Chapters() {
         style_id: number;
         target_word_count: number;
         model?: string;
+        provider_config_id?: string;
         skill_key?: string;
       } = {
         start_chapter_number: values.startChapterNumber,
@@ -1356,6 +1371,12 @@ export default function Chapters() {
         console.log('[批量生成] 请求体包含model:', model);
       } else {
         console.log('[批量生成] 请求体不包含model，使用后端默认模型');
+      }
+
+      // 如果有 AI 服务配置，添加到请求体中
+      if (batchSelectedProvider) {
+        requestBody.provider_config_id = batchSelectedProvider;
+        console.log('[批量生成] 请求体包含provider_config_id:', batchSelectedProvider);
       }
 
       // 如果有 Skill 参数，添加到请求体中
@@ -3210,22 +3231,46 @@ export default function Chapters() {
               </Form.Item>
             </div>
 
-            {/* 第三行：AI模型 + Skill */}
+            {/* 第三行：AI 服务 + AI模型 + Skill */}
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 0 : 16 }}>
               <Form.Item
-                label="AI模型"
-                tooltip="不选则使用默认模型"
+                label="AI 服务"
+                tooltip="选择自定义 AI 服务配置（OpenCode Go / vc-grok 等），不选则使用默认路由"
                 style={{ flex: 1, marginBottom: 12 }}
               >
                 <Select
-                  placeholder={batchSelectedModel ? `默认: ${availableModels.find(m => m.value === batchSelectedModel)?.label || batchSelectedModel}` : "使用默认模型"}
+                  placeholder="使用默认路由"
+                  value={batchSelectedProvider}
+                  onChange={(value) => {
+                    setBatchSelectedProvider(value);
+                    const provider = providers.find(p => p.id === value);
+                    setBatchProviderModels(provider ? provider.models.map(m => ({ value: m, label: m })) : []);
+                    if (!provider) setBatchSelectedModel(undefined);
+                  }}
+                  allowClear
+                >
+                  {providers.map(p => (
+                    <Select.Option key={p.id} value={p.id} label={p.name}>
+                      {p.name}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Form.Item
+                label="AI模型"
+                tooltip="不选则使用所选服务/默认模型"
+                style={{ flex: 1, marginBottom: 12 }}
+              >
+                <Select
+                  placeholder={batchSelectedModel ? `默认: ${(batchProviderModels.length ? batchProviderModels : availableModels).find(m => m.value === batchSelectedModel)?.label || batchSelectedModel}` : (batchSelectedProvider ? "选择该服务的模型" : "使用默认模型")}
                   value={batchSelectedModel}
                   onChange={setBatchSelectedModel}
                   allowClear
                   showSearch
                   optionFilterProp="label"
+                  options={batchSelectedProvider ? batchProviderModels : availableModels}
                 >
-                  {availableModels.map(model => (
+                  {(batchSelectedProvider ? batchProviderModels : availableModels).map(model => (
                     <Select.Option key={model.value} value={model.value} label={model.label}>
                       {model.label}
                     </Select.Option>

@@ -3981,6 +3981,7 @@ async def batch_generate_chapters_in_order(
         user_id=user_id,
         ai_service=user_ai_service,
         custom_model=batch_request.model,
+        provider_config_id=batch_request.provider_config_id,
         skill_key=batch_request.skill_key,
         enable_mcp=batch_request.enable_mcp,
         narrative_perspective=batch_request.narrative_perspective
@@ -4131,6 +4132,7 @@ async def execute_batch_generation_in_order(
     user_id: str,
     ai_service: AIService,
     custom_model: Optional[str] = None,
+    provider_config_id: Optional[str] = None,
     skill_key: Optional[str] = None,
     enable_mcp: bool = True,
     narrative_perspective: Optional[str] = None
@@ -4253,6 +4255,7 @@ async def execute_batch_generation_in_order(
                         ai_service=ai_service,
                         write_lock=write_lock,
                         custom_model=custom_model,
+                        provider_config_id=provider_config_id,
                         previous_summary_context=last_generated_summary,
                         skill_key=skill_key,
                         batch_id=batch_id,
@@ -4427,6 +4430,7 @@ async def generate_single_chapter_for_batch(
     ai_service: AIService,
     write_lock: Lock,
     custom_model: Optional[str] = None,
+    provider_config_id: Optional[str] = None,
     previous_summary_context: Optional[str] = None,
     skill_key: Optional[str] = None,
     batch_id: Optional[str] = None,
@@ -4664,6 +4668,16 @@ async def generate_single_chapter_for_batch(
     
     # 非流式生成内容
     full_content = ""
+    # 若指定了 AI 服务配置，为本章创建对应服务（否则用请求注入的默认服务）
+    if provider_config_id:
+        from app.services.ai_provider_service import create_routed_ai_service
+        ai_service = await create_routed_ai_service(
+            db_session, user_id=user_id, usage_type="chapter_write",
+            provider_config_id=provider_config_id, model=custom_model,
+            project_id=chapter.project_id, chapter_id=chapter.id,
+            task_trace_id=f"batch-{batch_id}", enable_mcp=bool(enable_mcp),
+        )
+        logger.info(f"  批量生成使用指定 AI 服务: {provider_config_id} model={custom_model}")
     # 准备生成参数
     generate_kwargs = {
         "prompt": prompt,
