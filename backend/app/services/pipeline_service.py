@@ -1125,14 +1125,36 @@ async def _generate_world_and_characters(db: AsyncSession, pipeline: NovelPipeli
             prompt=prompt, temperature=params.get("temperature", 0.8),
             max_tokens=params.get("max_tokens", 32000), auto_mcp=False,
         )
-        raw = result.get("content", "") if isinstance(result, dict) else str(result)
-        world = loads_json(raw)
-        if isinstance(world, dict):
-            project.world_time_period = world.get("time_period") or project.world_time_period
-            project.world_location = world.get("location") or project.world_location
-            project.world_atmosphere = world.get("atmosphere") or project.world_atmosphere
-            project.world_rules = world.get("rules") or project.world_rules
-            await db.flush()
+        # 世界设定硬性约束：4 个关键字段任一缺失即重试；重试仍缺则用兜底值（绝不留空）
+        world = {}
+        for attempt in range(3):
+            result = await service.generate_text(
+                prompt=prompt, temperature=params.get("temperature", 0.8),
+                max_tokens=params.get("max_tokens", 32000), auto_mcp=False,
+            )
+            raw = result.get("content", "") if isinstance(result, dict) else str(result)
+            parsed = loads_json(raw)
+            if isinstance(parsed, dict):
+                world = parsed
+            missing = [k for k in ("time_period", "location", "atmosphere", "rules")
+                       if not str(world.get(k) or "").strip()]
+            if not missing:
+                break
+            logger.warning(f"世界观字段缺失 {missing}，重试 {attempt + 1}/3")
+            await asyncio.sleep(5 * (attempt + 1))
+        fallback = {
+            "time_period": "现代都市（未明确年代）",
+            "location": "未明确指定城市",
+            "atmosphere": "真实、克制的叙事氛围",
+            "rules": "遵循现实世界的基本社会规则",
+        }
+        for key, attr in (("time_period", "world_time_period"), ("location", "world_location"),
+                          ("atmosphere", "world_atmosphere"), ("rules", "world_rules")):
+            value = str(world.get(key) or "").strip()
+            if not value:
+                value = fallback[key]
+            setattr(project, attr, value)
+        await db.flush()
 
     # 2) 角色：项目无角色才生成
     existing_chars = await db.scalar(
@@ -1166,21 +1188,48 @@ async def _generate_world_and_characters(db: AsyncSession, pipeline: NovelPipeli
     )
     raw = result.get("content", "") if isinstance(result, dict) else str(result)
     data = loads_json(raw)
+    from app.models.relationship import Organization
+
     chars = data if isinstance(data, list) else data.get("characters", []) if isinstance(data, dict) else []
     for c in chars[: count + 3]:
         if not isinstance(c, dict) or not c.get("name"):
             continue
-        db.add(Character(
+        # 关系数组（relationships_array）→ 存角色卡 relationships 字段（章节生成时注入）
+        relationships_text = ""
+        rels = c.get("relationships_array") or c.get("relationships") or []
+        if isinstance(rels, list) and rels:
+            relationships_text = json.dumps(rels, ensure_ascii=False)
+        char = Character(
             id=str(uuid.uuid4()),
             project_id=pipeline.project_id,
             name=c.get("name"),
             age=str(c.get("age") or "") if c.get("age") else None,
             gender=c.get("gender"),
-            role_type=c.get("role_type") or "supporting",
+            is_organization=bool(c.get("is_organization", False)),
+            role_type=c.get("role_type") or ("organization" if c.get("is_organization") else "supporting"),
             personality=c.get("personality") or "",
             background=c.get("backstory") or c.get("background") or "",
             appearance=c.get("appearance") or "",
-        ))
+            relationships=relationships_text or None,
+            organization_type=c.get("organization_type"),
+            organization_purpose=c.get("organization_purpose"),
+            organization_members=json.dumps(c.get("organization_members", []), ensure_ascii=False)
+            if isinstance(c.get("organization_members"), list) else None,
+        )
+        db.add(char)
+        await db.flush()
+        # 组织：is_organization=true 的角色 → 同时建 Organization 详情（势力等级/宗旨/地点等）
+        if char.is_organization:
+            db.add(Organization(
+                character_id=char.id,
+                project_id=pipeline.project_id,
+                level=int(c.get("level") or 0),
+                power_level=int(c.get("power_level") or 50),
+                member_count=int(c.get("member_count") or 0),
+                location=c.get("location"),
+                motto=c.get("motto"),
+                color=c.get("color"),
+            ))
     await db.flush()
 
 
