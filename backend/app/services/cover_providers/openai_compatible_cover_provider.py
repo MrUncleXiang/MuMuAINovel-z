@@ -49,41 +49,53 @@ class OpenAICompatibleCoverProvider(BaseCoverProvider):
         height: int,
     ) -> dict[str, Any]:
         url = f"{self.base_url}/images/generations"
-        payload: dict[str, Any] = {
-            "model": model,
-            "prompt": self._adapt_prompt(prompt=prompt, width=width, height=height),
-            "n": 1,
-            "response_format": "b64_json",
-        }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        logger.debug(
-            "OpenAI 兼容封面生成请求: url=%s model=%s prompt_len=%s",
-            url, model, len(prompt or ""),
-        )
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                response = await client.post(url, headers=headers, json=payload)
+        # 封面默认尺寸；若服务端报尺寸超预算，则自动降级重试
+        sizes = [f"{width}x{height}"]
+        if width * height > 768 * 1024:
+            sizes.append("768x1024")
+        if width * height > 512 * 768:
+            sizes.append("512x768")
+
+        last_error: Exception | None = None
+        for size in sizes:
+            payload: dict[str, Any] = {
+                "model": model,
+                "prompt": self._adapt_prompt(prompt=prompt, width=width, height=height),
+                "n": 1,
+                "size": size,
+                "response_format": "b64_json",
+            }
             logger.debug(
-                "OpenAI 兼容封面响应: status=%s body_preview=%s",
-                response.status_code,
-                safe_preview(response.text, 500),
+                "OpenAI 兼容封面生成请求: url=%s model=%s size=%s prompt_len=%s",
+                url, model, size, len(prompt or ""),
             )
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "OpenAI 兼容封面 HTTP 错误: status=%s response=%s",
-                exc.response.status_code if exc.response else None,
-                safe_preview(exc.response.text, 500) if exc.response is not None else None,
-            )
-            raise
-        except Exception:
-            logger.error("OpenAI 兼容封面请求异常", exc_info=True)
-            raise
+            try:
+                async with httpx.AsyncClient(timeout=240.0) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                if response.status_code != 200:
+                    detail = safe_preview(response.text, 300)
+                    logger.warning("OpenAI 兼容封面响应异常: status=%s size=%s detail=%s", response.status_code, size, detail)
+                    if response.status_code == 400 and ("size" in detail.lower() or "budget" in detail.lower()):
+                        # 尺寸超预算 → 降级重试
+                        last_error = ValueError(f"尺寸超预算: {detail}")
+                        continue
+                    raise ValueError(f"生图服务返回 HTTP {response.status_code}: {detail}")
+                data = response.json()
+            except httpx.TimeoutException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                raise ValueError(f"生图服务 HTTP 错误: {exc.response.status_code} {safe_preview(exc.response.text, 300)}")
+            except Exception:
+                logger.error("OpenAI 兼容封面请求异常", exc_info=True)
+                raise
+            break
+        else:
+            raise ValueError(f"生图服务拒绝所有尺寸（最近错误: {last_error}）")
 
         images = data.get("data") or []
         if not images:
