@@ -1894,7 +1894,7 @@ async def adopt_outline_candidate(
         batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
         if batch.target_type != "outline":
             raise ComparisonNotFoundError("大纲候选批次不存在")
-        batch, _ = await adopt_candidate(
+        batch, _, _ = await adopt_candidate(
             db, batch_id=batch_id, candidate_id=candidate_id,
             user_id=user_id, apply_target=apply_outline_candidate,
         )

@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chapter import Chapter
-from app.models.generation_history import GenerationHistory
 from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
 from app.models.outline import Outline
 from app.models.project import Project
@@ -19,6 +18,8 @@ from app.services.foreshadow_service import foreshadow_service
 from app.services.llm_comparison_service import CandidateGenerationResult, create_batch
 from app.services.memory_service import memory_service
 from app.services.prompt_service import PromptService, WritingStyleManager
+from app.services.formal_chapter_service import persist_formal_chapter_content
+from app.services.chapter_lifecycle_service import chapter_content_hash
 
 
 @dataclass
@@ -146,6 +147,7 @@ async def build_frozen_chapter_generation(
             "narrative_perspective": perspective,
             "target_word_count": request.target_word_count,
             "formal_content_before": chapter.content or "",
+            "formal_content_hash": chapter_content_hash(chapter.content),
             "formal_updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None,
         },
         prompt=prompt,
@@ -224,11 +226,7 @@ async def apply_chapter_candidate(
         Chapter.id == batch.target_id,
         Chapter.project_id == batch.project_id,
     ).with_for_update())
-    project = await db.scalar(select(Project).where(
-        Project.id == batch.project_id,
-        Project.user_id == batch.user_id,
-    ).with_for_update())
-    if chapter is None or project is None:
+    if chapter is None:
         raise ValueError("章节不存在或无权访问")
 
     expected_updated_at: Optional[str] = (batch.input_snapshot or {}).get("formal_updated_at")
@@ -239,26 +237,20 @@ async def apply_chapter_candidate(
     if not content.strip():
         raise ValueError("候选结果为空，不能采用")
 
-    old_content = chapter.content or ""
-    old_word_count = chapter.word_count or len(old_content)
-    chapter.content = content
-    chapter.word_count = len(content)
-    chapter.summary = content.strip()[:300]
-    chapter.status = "completed"
-    project.current_words = (project.current_words or 0) - old_word_count + len(content)
-    db.add(GenerationHistory(
-        project_id=chapter.project_id,
+    formal = await persist_formal_chapter_content(
+        db=db,
         chapter_id=chapter.id,
-        prompt=f"采用多模型候选前的正式版本（批次 {batch.id}）",
-        generated_content=old_content,
-        model="formal-before-comparison",
-    ))
-    db.add(GenerationHistory(
-        project_id=chapter.project_id,
-        chapter_id=chapter.id,
+        user_id=batch.user_id,
+        content=content,
         prompt=f"采用多模型候选：{candidate.provider_name} / {candidate.model}",
-        generated_content=content,
         model=candidate.model[:50],
-        tokens_used=candidate.total_tokens,
-        generation_time=(candidate.duration_ms or 0) / 1000,
-    ))
+        foreshadow_service=foreshadow_service,
+        memory_service=memory_service,
+        expected_content_hash=chapter_content_hash(
+            (batch.input_snapshot or {}).get("formal_content_before")
+        ),
+        commit=False,
+    )
+    output_data = dict(candidate.output_data or {})
+    output_data["formal_analysis_task_id"] = formal.analysis_task.id
+    candidate.output_data = output_data

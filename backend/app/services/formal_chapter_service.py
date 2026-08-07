@@ -85,6 +85,7 @@ async def persist_formal_chapter_content(
     foreshadow_service,
     memory_service,
     expected_content_hash: str | None = None,
+    commit: bool = True,
 ) -> FormalChapterResult:
     """Persist content, history, planned foreshadows and analysis task atomically."""
     chapter = await db.scalar(
@@ -137,7 +138,10 @@ async def persist_formal_chapter_content(
 
     analysis_task = create_pending_analysis_task(chapter=chapter, user_id=user_id)
     db.add(analysis_task)
-    await db.commit()
-    await db.refresh(chapter)
-    await db.refresh(analysis_task)
+    if commit:
+        await db.commit()
+        await db.refresh(chapter)
+        await db.refresh(analysis_task)
+    else:
+        await db.flush()
     return FormalChapterResult(chapter=chapter, analysis_task=analysis_task)

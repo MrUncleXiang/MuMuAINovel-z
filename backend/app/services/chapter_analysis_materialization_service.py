@@ -73,6 +73,7 @@ async def materialize_chapter_analysis(
     analyzer: Any,
     memory_service: Any,
     foreshadow_service: ForeshadowService,
+    commit: bool = True,
 ) -> AnalysisMaterializationResult:
     """Apply every formal analysis side effect under one relational transaction."""
     locked_chapter = await db.scalar(
@@ -100,7 +101,10 @@ async def materialize_chapter_analysis(
         task.error_message = None
         task.completed_at = datetime.now()
         task.materialized_at = task.completed_at
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         return AnalysisMaterializationResult(memory_count=0, already_materialized=True)
 
     report = analyzer.generate_analysis_summary(analysis)
@@ -230,5 +234,8 @@ async def materialize_chapter_analysis(
     task.error_message = None
     task.completed_at = datetime.now()
     task.materialized_at = task.completed_at
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return AnalysisMaterializationResult(memory_count=len(memories))

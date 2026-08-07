@@ -6,15 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chapter import Chapter
+from app.models.analysis_task import AnalysisTask
 from app.models.llm_comparison import LLMComparisonBatch, LLMComparisonCandidate
-from app.models.memory import PlotAnalysis
 from app.schemas.chapter import AnalysisComparisonCreateRequest
 from app.schemas.llm_comparison import LLMComparisonBatchCreate, LLMComparisonSelection
 from app.services.llm_comparison_service import CandidateGenerationResult, create_batch
 from app.services.chapter_analysis_context_service import build_chapter_analysis_context
-from app.services.chapter_lifecycle_service import chapter_content_hash
+from app.services.chapter_lifecycle_service import chapter_content_hash, create_pending_analysis_task
+from app.services.chapter_analysis_materialization_service import materialize_chapter_analysis
 from app.services.foreshadow_service import foreshadow_service
 from app.services.plot_analyzer import PlotAnalyzer
+from app.services.memory_service import memory_service
+from app.services.project_state_checkpoint_service import prepare_project_state_for_chapter_rewrite
 
 
 async def create_analysis_comparison(db: AsyncSession, *, chapter: Chapter, user_id: str, payload: AnalysisComparisonCreateRequest):
@@ -70,24 +73,42 @@ async def apply_analysis_candidate(db: AsyncSession, batch: LLMComparisonBatch, 
     if chapter is None or chapter.project_id != batch.project_id:
         raise ValueError("章节不存在")
     snap = batch.input_snapshot or {}
-    if (chapter.content or "") != snap.get("content") or (chapter.updated_at.isoformat() if chapter.updated_at else None) != snap.get("updated_at"):
+    if (
+        chapter_content_hash(chapter.content) != snap.get("content_hash")
+        or (chapter.updated_at.isoformat() if chapter.updated_at else None) != snap.get("updated_at")
+    ):
         raise ValueError("章节正文在候选分析后已改变，请重新分析")
     data = candidate.output_data or json.loads(candidate.output_text or "{}")
-    row = await db.scalar(select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter.id).with_for_update())
-    if row is None:
-        row = PlotAnalysis(project_id=chapter.project_id, chapter_id=chapter.id)
-        db.add(row)
-    values = {
-        "plot_stage": data.get("plot_stage", "发展"), "conflict_level": data.get("conflict", {}).get("level", 0),
-        "conflict_types": data.get("conflict", {}).get("types", []), "emotional_tone": data.get("emotional_arc", {}).get("primary_emotion", ""),
-        "emotional_intensity": data.get("emotional_arc", {}).get("intensity", 0)/10, "hooks": data.get("hooks", []),
-        "foreshadows": data.get("foreshadows", []), "plot_points": data.get("plot_points", []), "character_states": data.get("character_states", []),
-        "scenes": data.get("scenes", []), "pacing": data.get("pacing", "moderate"), "suggestions": data.get("suggestions", []),
-        "overall_quality_score": data.get("scores", {}).get("overall", 0), "pacing_score": data.get("scores", {}).get("pacing", 0),
-        "engagement_score": data.get("scores", {}).get("engagement", 0), "coherence_score": data.get("scores", {}).get("coherence", 0),
-        "analysis_report": data.get("analysis_report", ""), "dialogue_ratio": data.get("dialogue_ratio", 0), "description_ratio": data.get("description_ratio", 0),
-        "word_count": chapter.word_count or len(chapter.content or ""),
-    }
-    values.update(hooks_count=len(values["hooks"]), foreshadows_planted=sum(x.get("type")=="planted" for x in values["foreshadows"]),
-        foreshadows_resolved=sum(x.get("type")=="resolved" for x in values["foreshadows"]), plot_points_count=len(values["plot_points"]))
-    for key, value in values.items(): setattr(row, key, value)
+    existing_task = await db.scalar(
+        select(AnalysisTask)
+        .where(
+            AnalysisTask.chapter_id == chapter.id,
+            AnalysisTask.materialized_at.is_not(None),
+        )
+        .order_by(AnalysisTask.created_at.desc())
+        .limit(1)
+    )
+    if existing_task is not None:
+        await prepare_project_state_for_chapter_rewrite(
+            db,
+            user_id=batch.user_id,
+            chapter=chapter,
+            memory_service=memory_service,
+        )
+    task = create_pending_analysis_task(chapter=chapter, user_id=batch.user_id)
+    db.add(task)
+    await db.flush()
+    await materialize_chapter_analysis(
+        db=db,
+        user_id=batch.user_id,
+        chapter=chapter,
+        task=task,
+        analysis=data,
+        analyzer=PlotAnalyzer(None),
+        memory_service=memory_service,
+        foreshadow_service=foreshadow_service,
+        commit=False,
+    )
+    output_data = dict(data)
+    output_data["formal_analysis_task_id"] = task.id
+    candidate.output_data = output_data

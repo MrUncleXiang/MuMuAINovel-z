@@ -46,7 +46,7 @@ async def get_owned_batch(
         LLMComparisonBatch.user_id == user_id,
     )
     if lock:
-        statement = statement.with_for_update()
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     batch = await db.scalar(statement)
     if batch is None:
         raise ComparisonNotFoundError("比较批次不存在或无权访问")
@@ -162,19 +162,19 @@ async def adopt_candidate(
     candidate_id: str,
     user_id: str,
     apply_target: AdoptionCallback,
-) -> tuple[LLMComparisonBatch, LLMComparisonCandidate]:
+) -> tuple[LLMComparisonBatch, LLMComparisonCandidate, bool]:
     """锁定批次并采用候选；重复采用同一项会安全返回。"""
     batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id, lock=True)
     candidate = await db.scalar(
         select(LLMComparisonCandidate).where(
             LLMComparisonCandidate.id == candidate_id,
             LLMComparisonCandidate.batch_id == batch.id,
-        ).with_for_update()
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if candidate is None:
         raise ComparisonNotFoundError("候选结果不存在")
     if batch.adopted_candidate_id == candidate.id:
-        return batch, candidate
+        return batch, candidate, False
     if batch.adopted_candidate_id:
         raise ComparisonStateError("该批次已经采用了其他结果")
     if candidate.status != "success":
@@ -187,7 +187,7 @@ async def adopt_candidate(
         batch.status = "adopted"
         candidate.adopted_at = now
         await db.commit()
-        return batch, candidate
+        return batch, candidate, True
     except Exception:
         await db.rollback()
         raise
