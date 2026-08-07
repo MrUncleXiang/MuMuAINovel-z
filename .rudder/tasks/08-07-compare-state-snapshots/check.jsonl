@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "快照、迁移和重放测试要求"}
+{"file": ".rudder/spec/backend/database-guidelines.md", "reason": "事务、索引和 PostgreSQL 部署真值"}

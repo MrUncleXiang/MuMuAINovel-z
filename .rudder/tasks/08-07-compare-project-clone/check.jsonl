@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "复制服务全量验证"}
+{"file": ".rudder/spec/backend/database-guidelines.md", "reason": "外键、迁移和事务检查"}

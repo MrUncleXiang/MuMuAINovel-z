@@ -1,1 +1,5 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .rudder/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".rudder/spec/frontend/component-guidelines.md", "reason": "共享弹窗、AntD 与响应式组件规则"}
+{"file": ".rudder/spec/frontend/state-management.md", "reason": "页面状态和服务端真源规则"}
+{"file": ".rudder/spec/frontend/type-safety.md", "reason": "API 类型约束"}
+{"file": ".rudder/spec/guides/cross-layer-thinking-guide.md", "reason": "克隆和流水线跨层编排"}

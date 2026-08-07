@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "验证后端清理后仍可导入和编译"}
+{"file": ".rudder/spec/frontend/quality-guidelines.md", "reason": "验证前端清理后仍可构建"}

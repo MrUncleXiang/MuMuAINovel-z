@@ -2,7 +2,7 @@
   "id": "compare-ui",
   "name": "compare-ui",
   "title": "前端：对比创作入口（灵感模式/建书向导/流水线面板）",
-  "description": "三入口统一 AntD 风格：灵感模式按钮'用两个模型对比创作'、建书向导完成页'创建对比副本'、流水线驾驶舱'创建对比副本'；弹窗=服务选择+模型选择+章节数。",
+  "description": "三入口复用统一弹窗，分别选择模型 A/B 和章节数；源书仅作模板，创建两本全新副本并并行启动流水线，成功后进入对比视图。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "已冻结，禁止按本 PRD 实施。由 08-07-compare-single-clone-ui 替代。",
   "meta": {}
 }

@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "候选失败、部分成功和测试要求"}
+{"file": ".rudder/spec/frontend/quality-guidelines.md", "reason": "候选 UI 状态和费用提示"}

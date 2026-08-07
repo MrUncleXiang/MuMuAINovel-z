@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "已冻结，禁止按本 PRD 实施。由 08-07-compare-state-snapshots 和 08-07-compare-project-clone 替代。",
   "meta": {}
 }

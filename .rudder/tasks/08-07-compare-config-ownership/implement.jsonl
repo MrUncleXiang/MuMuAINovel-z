@@ -1,0 +1,3 @@
+{"file": ".rudder/spec/backend/database-guidelines.md", "reason": "项目配置模型、迁移和密钥边界"}
+{"file": ".rudder/spec/guides/ai-feature-extension-boundary-guide.md", "reason": "区分项目快照与用户全局资源"}
+{"file": ".rudder/tasks/08-07-compare-foundation-review/architecture-review.md", "reason": "配置所有权审查结论"}

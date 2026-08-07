@@ -1,0 +1,3 @@
+{"file": ".rudder/spec/backend/database-guidelines.md", "reason": "深复制事务、权限和双数据库要求"}
+{"file": ".rudder/spec/guides/pipeline-data-integrity-guide.md", "reason": "书籍完整设定清单"}
+{"file": ".rudder/tasks/08-07-compare-foundation-review/architecture-review.md", "reason": "复制闭包、向量和独立性结论"}

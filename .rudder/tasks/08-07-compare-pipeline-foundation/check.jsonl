@@ -1,0 +1,3 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "Pipeline 后端检查"}
+{"file": ".rudder/spec/frontend/quality-guidelines.md", "reason": "配置面板前端检查"}
+{"file": ".rudder/spec/guides/cross-layer-thinking-guide.md", "reason": "验证界面配置真实传到运行时"}

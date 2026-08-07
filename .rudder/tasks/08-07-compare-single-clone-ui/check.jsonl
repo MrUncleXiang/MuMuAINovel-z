@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/frontend/quality-guidelines.md", "reason": "构建、状态和响应式验证"}
+{"file": ".rudder/spec/frontend/type-safety.md", "reason": "API 类型和错误边界"}

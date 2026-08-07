@@ -1,1 +1,5 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .rudder/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".rudder/spec/frontend/component-guidelines.md", "reason": "双栏和移动端布局规则"}
+{"file": ".rudder/spec/frontend/state-management.md", "reason": "服务端真源与轮询状态"}
+{"file": ".rudder/spec/frontend/hook-guidelines.md", "reason": "请求与轮询清理"}
+{"file": ".rudder/spec/frontend/type-safety.md", "reason": "章节配对类型"}

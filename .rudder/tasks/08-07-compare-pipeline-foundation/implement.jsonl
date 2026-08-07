@@ -1,0 +1,3 @@
+{"file": ".rudder/spec/guides/pipeline-data-integrity-guide.md", "reason": "Pipeline 建书和推进完整性"}
+{"file": ".rudder/spec/guides/ai-feature-extension-boundary-guide.md", "reason": "复用章节与分析底座"}
+{"file": ".rudder/tasks/08-07-compare-existing-feature-audit/research/existing-multimodel-audit.md", "reason": "Pipeline 当前运行断点"}

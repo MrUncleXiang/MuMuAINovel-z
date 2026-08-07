@@ -2,7 +2,7 @@
   "id": "compare-view",
   "name": "compare-view",
   "title": "前端：对比视图（两本书同名章节并排阅读）",
-  "description": "选择两本书 → 并排显示同名章节正文（标题一一对应），支持逐章切换。",
+  "description": "选择两本书，按 chapter_number 配对章节；桌面并排、手机堆叠，支持逐章切换、缺章/生成状态和运行中自动刷新。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "已移出本轮范围，禁止与副本创建或生成流程绑定；未来如有真实需求再单独立项。",
   "meta": {}
 }

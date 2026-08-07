@@ -1,0 +1,3 @@
+{"file": ".rudder/spec/backend/database-guidelines.md", "reason": "检查点模型、约束和双数据库迁移"}
+{"file": ".rudder/spec/guides/cross-layer-thinking-guide.md", "reason": "版本、失效与重放契约"}
+{"file": ".rudder/tasks/08-07-compare-foundation-review/architecture-review.md", "reason": "任意 X 无法从现状态还原的证据"}

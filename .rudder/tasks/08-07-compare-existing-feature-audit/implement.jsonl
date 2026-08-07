@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/guides/ai-feature-extension-boundary-guide.md", "reason": "审计 AI 二开是否复用原有功能底座"}
+{"file": ".rudder/spec/guides/cross-layer-thinking-guide.md", "reason": "审计跨层数据流和持久化边界"}

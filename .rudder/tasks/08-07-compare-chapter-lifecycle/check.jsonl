@@ -1,0 +1,2 @@
+{"file": ".rudder/spec/backend/quality-guidelines.md", "reason": "后端质量门槛"}
+{"file": ".rudder/spec/guides/cross-layer-thinking-guide.md", "reason": "检查各入口是否共享同一生命周期契约"}
