@@ -17,6 +17,7 @@ class AnalysisTask(Base):
     chapter_id = Column(String(36), ForeignKey('chapters.id', ondelete='CASCADE'), nullable=False, comment="章节ID")
     user_id = Column(String(50), nullable=False, comment="用户ID")
     project_id = Column(String(36), nullable=False, comment="项目ID")
+    content_hash = Column(String(64), nullable=True, comment="任务对应的正式正文SHA-256")
     
     # 任务状态
     status = Column(String(20), nullable=False, default='pending', comment="任务状态: pending/running/completed/failed")
@@ -27,6 +28,7 @@ class AnalysisTask(Base):
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     started_at = Column(DateTime, nullable=True, comment="开始执行时间")
     completed_at = Column(DateTime, nullable=True, comment="完成时间")
+    materialized_at = Column(DateTime, nullable=True, comment="全部分析副作用物化完成时间")
     
     # 索引优化查询
     __table_args__ = (

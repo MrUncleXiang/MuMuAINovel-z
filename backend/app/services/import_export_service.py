@@ -15,6 +15,7 @@ from app.models.career import Career, CharacterCareer
 from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.analysis_task import AnalysisTask
 from app.models.project_default_style import ProjectDefaultStyle
+from app.services.chapter_lifecycle_service import chapter_content_hash
 from app.schemas.import_export import (
     ProjectExportData,
     ChapterExportData,
@@ -1313,14 +1314,17 @@ class ImportExportService:
             # 同时创建已完成的分析任务记录，这样章节管理页面会显示"已分析"状态
             if user_id:
                 now = datetime.utcnow()
+                chapter = await db.scalar(select(Chapter).where(Chapter.id == chapter_id))
                 analysis_task = AnalysisTask(
                     chapter_id=chapter_id,
                     user_id=user_id,
                     project_id=project_id,
+                    content_hash=chapter_content_hash(chapter.content if chapter else None),
                     status='completed',
                     progress=100,
                     started_at=now,
-                    completed_at=now
+                    completed_at=now,
+                    materialized_at=now,
                 )
                 db.add(analysis_task)
             

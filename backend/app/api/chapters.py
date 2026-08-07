@@ -87,6 +87,11 @@ from app.services.analysis_comparison_service import (
     create_analysis_comparison,
     generate_analysis_candidate,
 )
+from app.services.chapter_lifecycle_service import (
+    analysis_task_matches_content,
+    check_previous_analysis_ready,
+    create_pending_analysis_task,
+)
 from app.utils.sse_response import SSEResponse, create_sse_response
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
@@ -178,6 +183,7 @@ async def _set_analysis_task_terminal_state(
                         progress=100 if status == "completed" else 0,
                         error_message=error_message if status == "failed" else None,
                         completed_at=completed_at,
+                        materialized_at=completed_at if status == "completed" else None,
                     )
                 )
                 await terminal_db.commit()
@@ -600,36 +606,6 @@ async def check_prerequisites(db: AsyncSession, chapter: Chapter) -> tuple[bool,
         return False, error_msg, previous_chapters
     
     return True, "", previous_chapters
-
-
-async def check_previous_analysis_ready(db: AsyncSession, chapter: Chapter) -> tuple[bool, str]:
-    """检查上一章分析是否完成，避免下一章使用滞后的记忆和角色状态。"""
-    if chapter.chapter_number <= 1:
-        return True, ""
-
-    prev_result = await db.execute(
-        select(Chapter)
-        .where(Chapter.project_id == chapter.project_id)
-        .where(Chapter.chapter_number < chapter.chapter_number)
-        .order_by(Chapter.chapter_number.desc())
-        .limit(1)
-    )
-    prev_chapter = prev_result.scalar_one_or_none()
-    if not prev_chapter or not prev_chapter.content:
-        return True, ""
-
-    # 只查询标量字段，避免复用当前 Session identity map 中的旧 ORM 实例。
-    analysis_result = await db.execute(
-        select(AnalysisTask.id, AnalysisTask.status)
-        .where(AnalysisTask.chapter_id == prev_chapter.id)
-        .order_by(AnalysisTask.created_at.desc())
-        .limit(1)
-    )
-    analysis_task = analysis_result.first()
-    if analysis_task and analysis_task.status == 'completed':
-        return True, ""
-
-    return False, f"上一章（第{prev_chapter.chapter_number}章）内容分析尚未完成，请等待分析完成后再生成下一章，以保证角色状态、记忆和伏笔连贯"
 
 
 async def build_characters_info_with_careers(
@@ -1055,6 +1031,14 @@ async def _analyze_chapter_background_impl(
                 await db_session.commit()
             logger.error(f"❌ 章节不存在或内容为空: {chapter_id}")
             return False
+        if not analysis_task_matches_content(task, chapter):
+            async with write_lock:
+                task.status = "failed"
+                task.error_message = "章节正文已变化，请基于当前正文重新分析"
+                task.completed_at = datetime.now()
+                await db_session.commit()
+            logger.warning(f"分析任务对应的正文已过期: chapter_id={chapter_id}, task_id={task_id}")
+            return False
         
         async with write_lock:
             task.progress = 20
@@ -1178,6 +1162,17 @@ async def _analyze_chapter_background_impl(
                 task.completed_at = datetime.now()
                 await db_session.commit()
             logger.error(f"❌ AI分析失败: {chapter_id}")
+            return False
+
+        # LLM 调用期间用户可能编辑正文；过期结果绝不能写入正式状态。
+        await db_session.refresh(chapter)
+        if not analysis_task_matches_content(task, chapter):
+            async with write_lock:
+                task.status = "failed"
+                task.error_message = "分析期间章节正文发生变化，请重新分析"
+                task.completed_at = datetime.now()
+                await db_session.commit()
+            logger.warning(f"丢弃过期分析结果: chapter_id={chapter_id}, task_id={task_id}")
             return False
         
         async with write_lock:
@@ -2118,12 +2113,9 @@ async def generate_chapter_content_stream(
                     logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
                 
                 # 创建分析任务
-                analysis_task = AnalysisTask(
-                    chapter_id=chapter_id,
+                analysis_task = create_pending_analysis_task(
+                    chapter=current_chapter,
                     user_id=current_user_id,
-                    project_id=project.id,
-                    status='pending',
-                    progress=0
                 )
                 db_session.add(analysis_task)
                 await db_session.commit()
@@ -2633,12 +2625,9 @@ async def _run_chapter_generation_bg(
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
     # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
+    analysis_task = create_pending_analysis_task(
+        chapter=current_chapter,
         user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
     )
     db.add(analysis_task)
     await db.commit()
@@ -3188,12 +3177,9 @@ async def _run_chapter_generation_bg(
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
     # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
+    analysis_task = create_pending_analysis_task(
+        chapter=current_chapter,
         user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
     )
     db.add(analysis_task)
     await db.commit()
@@ -3498,22 +3484,28 @@ async def batch_analyze_unanalyzed_chapters(
         latest_task = latest_task_map.get(chapter.id)
 
         # 已在队列/分析中，跳过
-        if latest_task and latest_task.status in ("pending", "running"):
+        if (
+            latest_task
+            and latest_task.status in ("pending", "running")
+            and analysis_task_matches_content(latest_task, chapter)
+        ):
             total_skipped_running += 1
             continue
 
         # 已分析完成，跳过
-        if latest_task and latest_task.status == "completed":
+        if (
+            latest_task
+            and latest_task.status == "completed"
+            and latest_task.materialized_at is not None
+            and analysis_task_matches_content(latest_task, chapter)
+        ):
             total_already_completed += 1
             continue
 
         # 无任务/失败/未知状态，重新发起分析
-        analysis_task = AnalysisTask(
-            chapter_id=chapter.id,
+        analysis_task = create_pending_analysis_task(
+            chapter=chapter,
             user_id=user_id,
-            project_id=project_id,
-            status='pending',
-            progress=0
         )
         db.add(analysis_task)
         tasks_to_start.append((chapter, analysis_task))
@@ -3818,7 +3810,11 @@ async def trigger_chapter_analysis(
         .limit(1)
     )
     existing_task = existing_task_result.scalar_one_or_none()
-    if existing_task and existing_task.status in ("pending", "running"):
+    if (
+        existing_task
+        and existing_task.status in ("pending", "running")
+        and analysis_task_matches_content(existing_task, chapter)
+    ):
         return {
             "task_id": existing_task.id,
             "chapter_id": chapter_id,
@@ -3827,12 +3823,9 @@ async def trigger_chapter_analysis(
         }
     
     # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
+    analysis_task = create_pending_analysis_task(
+        chapter=chapter,
         user_id=user_id,
-        project_id=project.id,
-        status='pending',
-        progress=0
     )
     db.add(analysis_task)
     await db.commit()
@@ -4415,12 +4408,9 @@ async def execute_batch_generation_in_order(
                         logger.info(f"🔍 开始同步分析章节: 第{chapter.chapter_number}章")
 
                         async with write_lock:
-                            analysis_task = AnalysisTask(
-                                chapter_id=chapter_id,
+                            analysis_task = create_pending_analysis_task(
+                                chapter=chapter,
                                 user_id=user_id,
-                                project_id=task.project_id,
-                                status='pending',
-                                progress=0
                             )
                             db_session.add(analysis_task)
                             await db_session.commit()
