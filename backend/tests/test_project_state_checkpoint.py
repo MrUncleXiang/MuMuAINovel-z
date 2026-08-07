@@ -14,6 +14,9 @@ from app.services.project_state_checkpoint_service import serialize_snapshot_ent
 from app.services.project_state_checkpoint_service import create_project_state_checkpoint
 from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
 from app.services.project_state_checkpoint_service import prepare_project_state_for_chapter_rewrite
+from app.services.project_state_checkpoint_service import list_valid_project_checkpoints
+from app.services.project_state_checkpoint_service import register_latest_reliable_checkpoint
+from app.services.chapter_lifecycle_service import chapter_content_hash
 
 
 class FakeCheckpointSession:
@@ -58,6 +61,26 @@ class FakeRestoreSession:
     async def execute(self, statement):
         self.executed.append(statement)
         return SimpleNamespace(rowcount=1)
+
+
+class SequencedSession:
+    def __init__(self, scalar_values=None, scalar_lists=None):
+        self.scalar_values = list(scalar_values or [])
+        self.scalar_lists = list(scalar_lists or [])
+        self.added = []
+        self.commit = AsyncMock()
+
+    async def scalar(self, _statement):
+        return self.scalar_values.pop(0)
+
+    async def scalars(self, _statement):
+        return FakeScalars(self.scalar_lists.pop(0))
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def refresh(self, _value):
+        return None
 
 
 class ProjectStateSnapshotSchemaTests(unittest.TestCase):
@@ -225,6 +248,54 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
         restore.assert_awaited_once()
         invalidate.assert_awaited_once()
         self.assertEqual(len(db.executed), 2)
+
+    async def test_read_filter_invalidates_checkpoint_with_changed_content(self):
+        checkpoint = SimpleNamespace(
+            chapter_id="chapter-1",
+            content_hash=chapter_content_hash("old"),
+            status="valid",
+            invalid_reason=None,
+            invalidated_at=None,
+        )
+        chapter = SimpleNamespace(id="chapter-1", content="new")
+        db = SequencedSession(scalar_lists=[[checkpoint], [chapter]])
+
+        result = await list_valid_project_checkpoints(db, project_id="project-1")
+
+        self.assertEqual(result, [])
+        self.assertEqual(checkpoint.status, "invalid")
+        db.commit.assert_awaited_once()
+
+    async def test_legacy_registration_requires_every_chapter_analysis(self):
+        chapters = [
+            SimpleNamespace(
+                id="chapter-1", chapter_number=1, sub_index=1, content="one"
+            ),
+            SimpleNamespace(
+                id="chapter-2", chapter_number=2, sub_index=1, content="two"
+            ),
+        ]
+        first_task = SimpleNamespace(
+            id="task-1",
+            status="completed",
+            materialized_at=object(),
+            content_hash=chapter_content_hash("one"),
+        )
+        stale_second = SimpleNamespace(
+            id="task-2",
+            status="completed",
+            materialized_at=object(),
+            content_hash=chapter_content_hash("old two"),
+        )
+        db = SequencedSession(
+            scalar_values=[first_task, stale_second],
+            scalar_lists=[chapters],
+        )
+
+        with self.assertRaisesRegex(ValueError, "第2章"):
+            await register_latest_reliable_checkpoint(db, project_id="project-1")
+
+        self.assertEqual(db.added, [])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Versioned project state captured after formal chapter analysis."""
 
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,5 +41,5 @@ class ProjectStateCheckpointResponse(BaseModel):
     status: str
     invalid_reason: Optional[str] = None
     config_version: Optional[int] = None
-    created_at: str
-    invalidated_at: Optional[str] = None
+    created_at: datetime
+    invalidated_at: Optional[datetime] = None

@@ -30,6 +30,7 @@ from app.schemas.project_creation_config import (
     ProjectCreationConfigResponse,
     ProjectCreationRuntimeSnapshot,
 )
+from app.schemas.project_state_checkpoint import ProjectStateCheckpointResponse
 from app.schemas.import_export import (
     ExportOptions,
     ImportValidationResult,
@@ -41,6 +42,10 @@ from app.services.project_creation_config_service import (
     freeze_project_creation_config,
     get_project_creation_config,
     save_project_creation_config,
+)
+from app.services.project_state_checkpoint_service import (
+    list_valid_project_checkpoints,
+    register_latest_reliable_checkpoint,
 )
 from app.logger import get_logger
 from app.utils.data_consistency import (
@@ -108,6 +113,40 @@ async def get_creation_runtime_snapshot(
     try:
         return await freeze_project_creation_config(db, project=project, user_id=user_id)
     except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get(
+    "/{project_id}/state-checkpoints",
+    response_model=list[ProjectStateCheckpointResponse],
+    summary="获取本书可继承状态节点",
+)
+async def get_state_checkpoints(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    await verify_project_access(project_id, user_id, db)
+    return await list_valid_project_checkpoints(db, project_id=project_id)
+
+
+@router.post(
+    "/{project_id}/state-checkpoints/register-latest",
+    response_model=ProjectStateCheckpointResponse,
+    summary="为旧书登记最新可靠状态节点",
+)
+async def register_latest_state_checkpoint(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    await verify_project_access(project_id, user_id, db)
+    try:
+        return await register_latest_reliable_checkpoint(db, project_id=project_id)
+    except ValueError as exc:
+        await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
 
 

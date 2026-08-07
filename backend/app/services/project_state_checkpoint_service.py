@@ -17,6 +17,7 @@ from app.models.relationship import CharacterRelationship, Organization, Organiz
 from app.models.analysis_task import AnalysisTask
 from app.models.chapter import Chapter
 from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1, SnapshotEntity
+from app.services.chapter_lifecycle_service import analysis_task_matches_content
 
 
 SNAPSHOT_MODELS = (
@@ -299,3 +300,118 @@ async def prepare_project_state_for_chapter_rewrite(
         reason=f"第{chapter.chapter_number}章正文准备重建",
     )
     return previous
+
+
+async def list_valid_project_checkpoints(
+    db: AsyncSession,
+    *,
+    project_id: str,
+) -> list[ProjectStateCheckpoint]:
+    checkpoints = list((await db.scalars(
+        select(ProjectStateCheckpoint)
+        .where(
+            ProjectStateCheckpoint.project_id == project_id,
+            ProjectStateCheckpoint.status == "valid",
+        )
+        .order_by(
+            ProjectStateCheckpoint.chapter_number,
+            ProjectStateCheckpoint.created_at,
+        )
+    )).all())
+    if not checkpoints:
+        return []
+    chapter_ids = [checkpoint.chapter_id for checkpoint in checkpoints]
+    chapters = list((await db.scalars(
+        select(Chapter).where(Chapter.id.in_(chapter_ids))
+    )).all())
+    chapters_by_id = {chapter.id: chapter for chapter in chapters}
+    valid = []
+    for checkpoint in checkpoints:
+        chapter = chapters_by_id.get(checkpoint.chapter_id)
+        if chapter is None or checkpoint.content_hash != analysis_task_hash(chapter):
+            checkpoint.status = "invalid"
+            checkpoint.invalid_reason = "检查点正文版本与当前正式正文不一致"
+            checkpoint.invalidated_at = datetime.now()
+            continue
+        valid.append(checkpoint)
+    if len(valid) != len(checkpoints):
+        await db.commit()
+    return valid
+
+
+def analysis_task_hash(chapter: Chapter) -> str:
+    from app.services.chapter_lifecycle_service import chapter_content_hash
+
+    return chapter_content_hash(chapter.content)
+
+
+async def register_latest_reliable_checkpoint(
+    db: AsyncSession,
+    *,
+    project_id: str,
+) -> ProjectStateCheckpoint:
+    """Register only the latest legacy boundary that current evidence proves."""
+    chapters = list((await db.scalars(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.chapter_number, Chapter.sub_index)
+    )).all())
+    completed = [chapter for chapter in chapters if (chapter.content or "").strip()]
+    if not completed:
+        raise ValueError("项目没有可登记的正式章节")
+    numbers = [chapter.chapter_number for chapter in completed]
+    if numbers != list(range(1, numbers[-1] + 1)):
+        raise ValueError("章节正文不连续，无法证明最新状态边界")
+
+    latest_tasks: list[AnalysisTask] = []
+    for chapter in completed:
+        task = await db.scalar(
+            select(AnalysisTask)
+            .where(AnalysisTask.chapter_id == chapter.id)
+            .order_by(AnalysisTask.created_at.desc())
+            .limit(1)
+        )
+        if (
+            task is None
+            or task.status != "completed"
+            or task.materialized_at is None
+            or not analysis_task_matches_content(task, chapter)
+        ):
+            raise ValueError(f"第{chapter.chapter_number}章缺少与当前正文一致的完整分析")
+        latest_tasks.append(task)
+
+    latest_chapter = completed[-1]
+    latest_task = latest_tasks[-1]
+    existing = await db.scalar(select(ProjectStateCheckpoint).where(
+        ProjectStateCheckpoint.project_id == project_id,
+        ProjectStateCheckpoint.chapter_id == latest_chapter.id,
+        ProjectStateCheckpoint.content_hash == latest_task.content_hash,
+        ProjectStateCheckpoint.status == "valid",
+    ))
+    if existing is not None:
+        return existing
+
+    snapshot = await capture_project_state(
+        db,
+        project_id=project_id,
+        chapter_number=latest_chapter.chapter_number,
+    )
+    config_version = await db.scalar(select(ProjectCreationConfig.config_version).where(
+        ProjectCreationConfig.project_id == project_id,
+    ))
+    checkpoint = ProjectStateCheckpoint(
+        id=str(uuid.uuid4()),
+        project_id=project_id,
+        chapter_id=latest_chapter.id,
+        chapter_number=latest_chapter.chapter_number,
+        analysis_task_id=latest_task.id,
+        content_hash=latest_task.content_hash,
+        schema_version=snapshot.schema_version,
+        status="valid",
+        config_version=config_version,
+        state_json=snapshot.model_dump(mode="json"),
+    )
+    db.add(checkpoint)
+    await db.commit()
+    await db.refresh(checkpoint)
+    return checkpoint
