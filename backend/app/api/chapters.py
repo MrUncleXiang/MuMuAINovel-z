@@ -69,21 +69,18 @@ from app.models.llm_comparison import LLMComparisonBatch
 from app.models.llm_comparison import LLMComparisonCandidate
 from app.schemas.llm_comparison import LLMComparisonBatchResponse, LLMComparisonCandidateResponse
 from app.services.chapter_comparison_service import (
-    apply_chapter_candidate,
     create_chapter_comparison,
     generate_chapter_candidate,
 )
 from app.services.llm_comparison_service import (
     ComparisonNotFoundError,
     ComparisonStateError,
-    adopt_candidate,
     get_owned_batch,
     list_candidates,
     retry_candidate,
     run_batch,
 )
 from app.services.analysis_comparison_service import (
-    apply_analysis_candidate,
     create_analysis_comparison,
     generate_analysis_candidate,
 )
@@ -91,6 +88,13 @@ from app.services.chapter_lifecycle_service import (
     analysis_task_matches_content,
     check_previous_analysis_ready,
     create_pending_analysis_task,
+)
+from app.services.chapter_analysis_materialization_service import (
+    materialize_chapter_analysis,
+)
+from app.services.chapter_analysis_context_service import (
+    build_chapter_analysis_context,
+    build_characters_info_with_careers,
 )
 from app.utils.sse_response import SSEResponse, create_sse_response
 
@@ -608,270 +612,6 @@ async def check_prerequisites(db: AsyncSession, chapter: Chapter) -> tuple[bool,
     return True, "", previous_chapters
 
 
-async def build_characters_info_with_careers(
-    db: AsyncSession,
-    project_id: str,
-    characters: list[Character],
-    filter_character_names: Optional[list[str]] = None
-) -> str:
-    """
-    构建包含职业信息的角色上下文
-    
-    Args:
-        db: 数据库会话
-        project_id: 项目ID
-        characters: 角色列表
-        filter_character_names: 可选，筛选特定角色名称列表（用于1-1模式的structure.characters或1-n模式的expansion_plan.character_focus）
-        
-    Returns:
-        格式化的角色信息字符串，包含职业信息
-    """
-    if not characters:
-        return '暂无角色信息'
-    
-    # 如果提供了筛选名单，只保留匹配的角色
-    if filter_character_names:
-        filtered_characters = [c for c in characters if c.name in filter_character_names]
-        if not filtered_characters:
-            logger.warning(f"筛选后无匹配角色，使用全部角色。筛选名单: {filter_character_names}")
-            filtered_characters = characters
-        else:
-            logger.info(f"根据筛选名单保留 {len(filtered_characters)}/{len(characters)} 个角色: {[c.name for c in filtered_characters]}")
-        characters = filtered_characters
-    
-    # 获取所有职业信息（一次性查询，提高效率）
-    careers_result = await db.execute(
-        select(Career).where(Career.project_id == project_id)
-    )
-    careers_map = {c.id: c for c in careers_result.scalars().all()}
-    
-    # 获取所有角色的职业关联（一次性查询）
-    character_ids = [c.id for c in characters]
-    if not character_ids:
-        return '暂无角色信息'
-    
-    # 构建全局角色名称映射（用于关系显示）
-    all_chars_result = await db.execute(
-        select(Character.id, Character.name).where(Character.project_id == project_id)
-    )
-    all_char_name_map = {row.id: row.name for row in all_chars_result.all()}
-        
-    character_careers_result = await db.execute(
-        select(CharacterCareer).where(CharacterCareer.character_id.in_(character_ids))
-    )
-    character_careers = character_careers_result.scalars().all()
-    
-    # 获取所有角色的关系（一次性查询）
-    from sqlalchemy import or_
-    rels_result = await db.execute(
-        select(CharacterRelationship).where(
-            CharacterRelationship.project_id == project_id,
-            or_(
-                CharacterRelationship.character_from_id.in_(character_ids),
-                CharacterRelationship.character_to_id.in_(character_ids)
-            )
-        )
-    )
-    all_relationships = rels_result.scalars().all()
-    
-    # 按角色ID分组关系
-    char_rels_map: dict[str, list] = {cid: [] for cid in character_ids}
-    for r in all_relationships:
-        if r.character_from_id in char_rels_map:
-            char_rels_map[r.character_from_id].append(r)
-        if r.character_to_id in char_rels_map:
-            char_rels_map[r.character_to_id].append(r)
-    
-    # 获取所有组织及其成员关系（一次性查询）
-    orgs_result = await db.execute(
-        select(Organization).where(Organization.project_id == project_id)
-    )
-    all_orgs = orgs_result.scalars().all()
-    
-    # 构建组织ID到组织名称的映射（通过关联的Character记录）
-    org_name_map = {}  # org_id -> org_name
-    char_id_to_org = {}  # character_id -> Organization（用于组织实体补充详情）
-    for org in all_orgs:
-        org_name_map[org.id] = all_char_name_map.get(org.character_id, '未知组织')
-        char_id_to_org[org.character_id] = org
-    
-    # 获取所有组织的成员关系（一次性查询）
-    org_ids = [org.id for org in all_orgs]
-    all_org_members = []
-    if org_ids:
-        all_org_members_result = await db.execute(
-            select(OrganizationMember).where(
-                OrganizationMember.organization_id.in_(org_ids)
-            )
-        )
-        all_org_members = all_org_members_result.scalars().all()
-    
-    # 按组织ID分组成员（用于组织实体显示成员列表）
-    org_members_map: dict[str, list] = {oid: [] for oid in org_ids}
-    for m in all_org_members:
-        if m.organization_id in org_members_map:
-            org_members_map[m.organization_id].append(m)
-    
-    # 获取涉及当前非组织角色的成员关系
-    non_org_char_ids = [c.id for c in characters if not c.is_organization]
-    char_org_map: dict[str, list] = {cid: [] for cid in non_org_char_ids}
-    for m in all_org_members:
-        if m.character_id in char_org_map:
-            char_org_map[m.character_id].append(m)
-    
-    # 构建角色ID到职业信息的映射
-    char_career_map = {}
-    for cc in character_careers:
-        if cc.character_id not in char_career_map:
-            char_career_map[cc.character_id] = {'main': None, 'sub': []}
-        
-        career = careers_map.get(cc.career_id)
-        if not career:
-            continue
-            
-        career_info = {
-            'name': career.name,
-            'stage': cc.current_stage,
-            'max_stage': career.max_stage,
-            'stage_progress': cc.stage_progress
-        }
-        
-        if cc.career_type == 'main':
-            char_career_map[cc.character_id]['main'] = career_info
-        else:
-            char_career_map[cc.character_id]['sub'].append(career_info)
-    
-    # 构建角色信息字符串
-    characters_info_parts = []
-    for c in characters:
-        # 基本信息（含存活状态标记）
-        entity_type = '组织' if c.is_organization else '角色'
-        status_marker = ""
-        char_status = getattr(c, 'status', None) or 'active'
-        if char_status != 'active':
-            STATUS_MARKERS = {
-                'deceased': '💀已死亡',
-                'missing': '❓已失踪',
-                'retired': '📤已退场',
-                'destroyed': '💀已覆灭'
-            }
-            status_marker = f" [{STATUS_MARKERS.get(char_status, char_status)}]"
-        base_info = f"- {c.name}({entity_type}, {c.role_type}){status_marker}"
-        
-        # 组织实体：补充组织详情
-        org_detail_str = ""
-        if c.is_organization and c.id in char_id_to_org:
-            org = char_id_to_org[c.id]
-            org_detail_parts = []
-            if c.organization_type:
-                org_detail_parts.append(f"类型:{c.organization_type}")
-            if c.organization_purpose:
-                purpose_preview = c.organization_purpose[:60] if len(c.organization_purpose) > 60 else c.organization_purpose
-                org_detail_parts.append(f"宗旨:{purpose_preview}")
-            if org.power_level is not None:
-                org_detail_parts.append(f"势力等级:{org.power_level}")
-            if org.location:
-                org_detail_parts.append(f"据点:{org.location}")
-            if org.motto:
-                org_detail_parts.append(f"口号:{org.motto}")
-            if org.member_count:
-                org_detail_parts.append(f"成员数:{org.member_count}")
-            if org_detail_parts:
-                org_detail_str = f" | {', '.join(org_detail_parts)}"
-            
-            # 显示组织的核心成员列表（最多5个）
-            if org.id in org_members_map and org_members_map[org.id]:
-                member_parts = []
-                for m in sorted(org_members_map[org.id], key=lambda x: -(x.rank or 0))[:5]:
-                    m_name = all_char_name_map.get(m.character_id, '未知')
-                    m_desc = f"{m_name}({m.position})"
-                    if m.status and m.status != 'active':
-                        m_desc += f"[{m.status}]"
-                    member_parts.append(m_desc)
-                if member_parts:
-                    org_detail_str += f" | 成员: {', '.join(member_parts)}"
-        
-        # 职业信息
-        career_info_str = ""
-        if c.id in char_career_map:
-            career_data = char_career_map[c.id]
-            
-            # 主职业
-            if career_data['main']:
-                main = career_data['main']
-                stage_desc = f"{main['stage']}/{main['max_stage']}阶"
-                career_info_str += f" | 主职业: {main['name']}({stage_desc})"
-            
-            # 副职业
-            if career_data['sub']:
-                sub_list = []
-                for sub in career_data['sub']:
-                    stage_desc = f"{sub['stage']}/{sub['max_stage']}阶"
-                    sub_list.append(f"{sub['name']}({stage_desc})")
-                career_info_str += f" | 副职业: {', '.join(sub_list)}"
-        
-        # 心理状态（由章节分析自动更新）
-        state_str = ""
-        if c.current_state:
-            state_preview = c.current_state[:50] if len(c.current_state) > 50 else c.current_state
-            state_str = f" | 当前状态: {state_preview}"
-            if c.state_updated_chapter:
-                state_str += f"(第{c.state_updated_chapter}章)"
-        
-        # 组织成员信息（非组织角色才显示所属组织）
-        org_str = ""
-        if not c.is_organization and c.id in char_org_map and char_org_map[c.id]:
-            org_parts = []
-            for m in char_org_map[c.id][:3]:  # 最多显示3个组织
-                o_name = org_name_map.get(m.organization_id, '未知组织')
-                o_desc = f"{o_name}({m.position})"
-                if m.loyalty is not None and m.loyalty != 50:
-                    o_desc += f"[忠诚度:{m.loyalty}]"
-                if m.status and m.status != 'active':
-                    o_desc += f"[{m.status}]"
-                org_parts.append(o_desc)
-            if org_parts:
-                org_str = f" | 所属组织: {', '.join(org_parts)}"
-        
-        # 关系信息
-        rel_str = ""
-        if c.id in char_rels_map and char_rels_map[c.id]:
-            rel_parts = []
-            seen_pairs = set()  # 避免重复显示同一对关系
-            for r in char_rels_map[c.id][:5]:  # 最多显示5个关系
-                # 确定对方角色名
-                if r.character_from_id == c.id:
-                    other_name = all_char_name_map.get(r.character_to_id, '未知')
-                else:
-                    other_name = all_char_name_map.get(r.character_from_id, '未知')
-                
-                pair_key = tuple(sorted([c.id, r.character_from_id if r.character_from_id != c.id else r.character_to_id]))
-                if pair_key in seen_pairs:
-                    continue
-                seen_pairs.add(pair_key)
-                
-                rel_name = r.relationship_name or '关联'
-                rel_desc = f"{other_name}({rel_name})"
-                if r.intimacy_level is not None and r.intimacy_level != 50:
-                    rel_desc += f"[亲密度:{r.intimacy_level}]"
-                rel_parts.append(rel_desc)
-            
-            if rel_parts:
-                rel_str = f" | 关系: {', '.join(rel_parts)}"
-        
-        # 性格描述
-        personality_str = ""
-        if c.personality:
-            personality_preview = c.personality[:100] if len(c.personality) > 100 else c.personality
-            personality_str = f": {personality_preview}"
-        
-        # 组合完整信息
-        full_info = base_info + org_detail_str + career_info_str + state_str + org_str + rel_str + personality_str
-        characters_info_parts.append(full_info)
-    
-    return "\n".join(characters_info_parts)
-
-
 @router.get("/{chapter_id}/can-generate", summary="检查章节是否可以生成")
 async def check_can_generate(
     chapter_id: str,
@@ -1057,70 +797,11 @@ async def _analyze_chapter_background_impl(
                 enable_mcp=True,
             )
 
-        # 获取已埋入的伏笔列表（用于回收匹配，传入当前章节号以启用智能标记）
-        existing_foreshadows = await foreshadow_service.get_planted_foreshadows_for_analysis(
+        analysis_context = await build_chapter_analysis_context(
             db=db_session,
-            project_id=project_id,
-            current_chapter_number=chapter.chapter_number  # 传入当前章节号以启用智能标记
+            chapter=chapter,
+            foreshadow_service=foreshadow_service,
         )
-        logger.info(f"📋 后台分析 - 已获取{len(existing_foreshadows)}个已埋入伏笔用于匹配（含智能回收标记）")
-        
-        # 获取项目角色信息（根据大纲/展开规划筛选本章相关角色）
-        filter_character_names = None
-        
-        # 1-N模式：从expansion_plan中提取character_focus
-        if chapter.expansion_plan:
-            try:
-                plan = json.loads(chapter.expansion_plan)
-                focus_names = plan.get('character_focus', [])
-                if focus_names:
-                    filter_character_names = focus_names
-                    logger.info(f"📋 从expansion_plan提取角色焦点: {filter_character_names}")
-            except (json.JSONDecodeError, Exception):
-                pass
-        
-        # 1-1模式：从outline.structure中提取characters
-        if not filter_character_names and chapter.outline_id:
-            try:
-                outline_result = await db_session.execute(
-                    select(Outline).where(Outline.id == chapter.outline_id)
-                )
-                chapter_outline = outline_result.scalar_one_or_none()
-                if chapter_outline and chapter_outline.structure:
-                    structure = json.loads(chapter_outline.structure)
-                    raw_characters = structure.get('characters', [])
-                    if raw_characters:
-                        filter_character_names = [
-                            c['name'] if isinstance(c, dict) else c
-                            for c in raw_characters
-                        ]
-                        logger.info(f"📋 从outline.structure提取角色: {filter_character_names}")
-            except (json.JSONDecodeError, Exception):
-                pass
-        
-        # 查询角色（根据筛选名单或全部）
-        characters_query = select(Character).where(Character.project_id == project_id)
-        if filter_character_names:
-            characters_query = characters_query.where(Character.name.in_(filter_character_names))
-        characters_result = await db_session.execute(characters_query)
-        project_characters = characters_result.scalars().all()
-        
-        # 如果筛选后无角色，降级为全部角色
-        if not project_characters and filter_character_names:
-            logger.warning(f"⚠️ 筛选后无匹配角色，降级为全部角色")
-            characters_result = await db_session.execute(
-                select(Character).where(Character.project_id == project_id)
-            )
-            project_characters = characters_result.scalars().all()
-            filter_character_names = None
-        
-        characters_info = await build_characters_info_with_careers(
-            db=db_session,
-            project_id=project_id,
-            characters=project_characters,
-            filter_character_names=filter_character_names
-        )
-        logger.info(f"📋 后台分析 - 已获取{len(project_characters)}个角色信息用于分析")
         
         # 定义重试回调函数，用于在重试时更新任务状态
         async def on_retry_callback(attempt: int, max_retries: int, wait_time: int, error_reason: str):
@@ -1150,9 +831,11 @@ async def _analyze_chapter_background_impl(
             title=chapter.title,
             content=chapter.content,
             word_count=chapter.word_count or len(chapter.content),
-            existing_foreshadows=existing_foreshadows,
+            user_id=user_id,
+            db=db_session,
+            existing_foreshadows=analysis_context.existing_foreshadows,
             on_retry=on_retry_callback,
-            characters_info=characters_info
+            characters_info=analysis_context.characters_info
         )
         
         if not analysis_result:
@@ -1176,293 +859,25 @@ async def _analyze_chapter_background_impl(
             return False
         
         async with write_lock:
-            task.progress = 60
-            await db_session.commit()
-        
-        # 4. 保存分析结果到数据库（写操作，需要锁）
-        async with write_lock:
-            existing_analysis_result = await db_session.execute(
-                select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
-            )
-            existing_analysis = existing_analysis_result.scalar_one_or_none()
-            
-            if existing_analysis:
-                # 更新现有记录
-                logger.info(f"  更新现有分析记录: {existing_analysis.id}")
-                existing_analysis.plot_stage = analysis_result.get('plot_stage', '发展')
-                existing_analysis.conflict_level = analysis_result.get('conflict', {}).get('level', 0)
-                existing_analysis.conflict_types = analysis_result.get('conflict', {}).get('types', [])
-                existing_analysis.emotional_tone = analysis_result.get('emotional_arc', {}).get('primary_emotion', '')
-                existing_analysis.emotional_intensity = analysis_result.get('emotional_arc', {}).get('intensity', 0) / 10.0
-                existing_analysis.hooks = analysis_result.get('hooks', [])
-                existing_analysis.hooks_count = len(analysis_result.get('hooks', []))
-                existing_analysis.foreshadows = analysis_result.get('foreshadows', [])
-                existing_analysis.foreshadows_planted = sum(1 for f in analysis_result.get('foreshadows', []) if f.get('type') == 'planted')
-                existing_analysis.foreshadows_resolved = sum(1 for f in analysis_result.get('foreshadows', []) if f.get('type') == 'resolved')
-                existing_analysis.plot_points = analysis_result.get('plot_points', [])
-                existing_analysis.plot_points_count = len(analysis_result.get('plot_points', []))
-                existing_analysis.character_states = analysis_result.get('character_states', [])
-                existing_analysis.scenes = analysis_result.get('scenes', [])
-                existing_analysis.pacing = analysis_result.get('pacing', 'moderate')
-                existing_analysis.overall_quality_score = analysis_result.get('scores', {}).get('overall', 0)
-                existing_analysis.pacing_score = analysis_result.get('scores', {}).get('pacing', 0)
-                existing_analysis.engagement_score = analysis_result.get('scores', {}).get('engagement', 0)
-                existing_analysis.coherence_score = analysis_result.get('scores', {}).get('coherence', 0)
-                existing_analysis.analysis_report = analyzer.generate_analysis_summary(analysis_result)
-                existing_analysis.suggestions = analysis_result.get('suggestions', [])
-                existing_analysis.dialogue_ratio = analysis_result.get('dialogue_ratio', 0)
-                existing_analysis.description_ratio = analysis_result.get('description_ratio', 0)
-            else:
-                # 创建新记录
-                logger.info(f"  创建新的分析记录")
-                plot_analysis = PlotAnalysis(
-                    chapter_id=chapter_id,
-                    project_id=project_id,
-                    plot_stage=analysis_result.get('plot_stage', '发展'),
-                    conflict_level=analysis_result.get('conflict', {}).get('level', 0),
-                    conflict_types=analysis_result.get('conflict', {}).get('types', []),
-                    emotional_tone=analysis_result.get('emotional_arc', {}).get('primary_emotion', ''),
-                    emotional_intensity=analysis_result.get('emotional_arc', {}).get('intensity', 0) / 10.0,
-                    hooks=analysis_result.get('hooks', []),
-                    hooks_count=len(analysis_result.get('hooks', [])),
-                    foreshadows=analysis_result.get('foreshadows', []),
-                    foreshadows_planted=sum(1 for f in analysis_result.get('foreshadows', []) if f.get('type') == 'planted'),
-                    foreshadows_resolved=sum(1 for f in analysis_result.get('foreshadows', []) if f.get('type') == 'resolved'),
-                    plot_points=analysis_result.get('plot_points', []),
-                    plot_points_count=len(analysis_result.get('plot_points', [])),
-                    character_states=analysis_result.get('character_states', []),
-                    scenes=analysis_result.get('scenes', []),
-                    pacing=analysis_result.get('pacing', 'moderate'),
-                    overall_quality_score=analysis_result.get('scores', {}).get('overall', 0),
-                    pacing_score=analysis_result.get('scores', {}).get('pacing', 0),
-                    engagement_score=analysis_result.get('scores', {}).get('engagement', 0),
-                    coherence_score=analysis_result.get('scores', {}).get('coherence', 0),
-                    analysis_report=analyzer.generate_analysis_summary(analysis_result),
-                    suggestions=analysis_result.get('suggestions', []),
-                    dialogue_ratio=analysis_result.get('dialogue_ratio', 0),
-                    description_ratio=analysis_result.get('description_ratio', 0)
-                )
-                db_session.add(plot_analysis)
-            
-            await db_session.commit()
-            
-            task.progress = 80
-            await db_session.commit()
-        
-        # 5. 清理旧的分析伏笔（重新分析时需要先清理）
-        try:
-            async with write_lock:
-                clean_result = await foreshadow_service.clean_chapter_analysis_foreshadows(
-                    db=db_session,
-                    project_id=project_id,
-                    chapter_id=chapter_id
-                )
-            if clean_result['cleaned_count'] > 0:
-                logger.info(f"🧹 重新分析前清理了 {clean_result['cleaned_count']} 个旧伏笔")
-        except Exception as clean_error:
-            logger.warning(f"⚠️ 清理旧伏笔失败（继续分析）: {str(clean_error)}")
-        
-        # 6. 提取记忆并保存到向量数据库（传入章节内容用于计算位置）
-        memories = analyzer.extract_memories_from_analysis(
-            analysis=analysis_result,
-            chapter_id=chapter_id,
-            chapter_number=chapter.chapter_number,
-            chapter_content=chapter.content or "",
-            chapter_title=chapter.title or ""
-        )
-        
-        # 先删除该章节的旧记忆（写操作，需要锁）
-        async with write_lock:
-            old_memories_result = await db_session.execute(
-                select(StoryMemory).where(StoryMemory.chapter_id == chapter_id)
-            )
-            old_memories = old_memories_result.scalars().all()
-            for old_mem in old_memories:
-                await db_session.delete(old_mem)
-            await db_session.commit()
-            logger.info(f"  删除旧记忆: {len(old_memories)}条")
-        
-        # 准备批量添加的记忆数据（不需要锁）
-        memory_records = []
-        for mem in memories:
-            memory_id = f"{chapter_id}_{mem['type']}_{len(memory_records)}"
-            memory_records.append({
-                'id': memory_id,
-                'content': mem['content'],
-                'type': mem['type'],
-                'metadata': mem['metadata']
-            })
-            
-        # 保存到关系数据库（写操作，需要锁）
-        async with write_lock:
-            for index, mem in enumerate(memories):
-                memory_id = memory_records[index]['id']
-                text_position = mem['metadata'].get('text_position', -1)
-                text_length = mem['metadata'].get('text_length', 0)
-                
-                story_memory = StoryMemory(
-                    id=memory_id,
-                    project_id=project_id,
-                    chapter_id=chapter_id,
-                    memory_type=mem['type'],
-                    content=mem['content'],
-                    title=mem['title'],
-                    importance_score=mem['metadata'].get('importance_score', 0.5),
-                    tags=mem['metadata'].get('tags', []),
-                    is_foreshadow=mem['metadata'].get('is_foreshadow', 0),
-                    story_timeline=chapter.chapter_number,
-                    chapter_position=text_position,
-                    text_length=text_length,
-                    related_characters=mem['metadata'].get('related_characters', []),
-                    related_locations=mem['metadata'].get('related_locations', [])
-                )
-                db_session.add(story_memory)
-                
-                if text_position >= 0:
-                    logger.debug(f"  保存记忆 {memory_id}: position={text_position}, length={text_length}")
-            
-            await db_session.commit()
-        
-        # 批量添加到向量数据库
-        if memory_records:
-            added_count = await memory_service.batch_add_memories(
+            materialization = await materialize_chapter_analysis(
+                db=db_session,
                 user_id=user_id,
-                project_id=project_id,
-                memories=memory_records
+                chapter=chapter,
+                task=task,
+                analysis=analysis_result,
+                analyzer=analyzer,
+                memory_service=memory_service,
+                foreshadow_service=foreshadow_service,
             )
-            logger.info(f"✅ 添加{added_count}条记忆到向量库")
-        
-        # 💼 更新角色职业（根据分析结果）
-        if analysis_result.get('character_states'):
-            try:
-                from app.services.career_update_service import CareerUpdateService
-                
-                logger.info(f"💼 开始根据分析结果更新角色职业...")
-                career_update_result = await CareerUpdateService.update_careers_from_analysis(
-                    db=db_session,
-                    project_id=project_id,
-                    character_states=analysis_result.get('character_states', []),
-                    chapter_id=chapter_id,
-                    chapter_number=chapter.chapter_number
-                )
-                
-                if career_update_result['updated_count'] > 0:
-                    logger.info(
-                        f"✅ 更新了 {career_update_result['updated_count']} 个角色的职业信息"
-                    )
-                    if career_update_result['changes']:
-                        for change in career_update_result['changes']:
-                            logger.info(f"  - {change}")
-                else:
-                    logger.info("ℹ️ 本章节无角色职业变化")
-                    
-            except Exception as career_error:
-                # 职业更新失败不应影响整个分析流程
-                logger.error(f"⚠️ 更新角色职业失败: {str(career_error)}", exc_info=True)
+
+        if materialization.already_materialized:
+            logger.info(f"章节分析已由同一正文的其他任务完成: {chapter_id}")
         else:
-            logger.debug("📋 分析结果中无角色状态信息，跳过职业更新")
-        
-        # 👤 更新角色心理状态和关系（根据分析结果）
-        if analysis_result.get('character_states'):
-            try:
-                from app.services.character_state_update_service import CharacterStateUpdateService
-                
-                logger.info(f"👤 开始根据分析结果更新角色状态、关系和组织成员...")
-                async with write_lock:
-                    state_update_result = await CharacterStateUpdateService.update_from_analysis(
-                        db=db_session,
-                        project_id=project_id,
-                        character_states=analysis_result.get('character_states', []),
-                        chapter_id=chapter_id,
-                        chapter_number=chapter.chapter_number
-                    )
-                
-                total_state_changes = (
-                    state_update_result['state_updated_count'] +
-                    state_update_result['relationship_created_count'] +
-                    state_update_result['relationship_updated_count'] +
-                    state_update_result.get('org_updated_count', 0)
-                )
-                if total_state_changes > 0:
-                    logger.info(
-                        f"✅ 角色状态更新: 心理状态{state_update_result['state_updated_count']}个, "
-                        f"新建关系{state_update_result['relationship_created_count']}个, "
-                        f"更新关系{state_update_result['relationship_updated_count']}个, "
-                        f"组织变动{state_update_result.get('org_updated_count', 0)}个"
-                    )
-                    if state_update_result['changes']:
-                        for change in state_update_result['changes'][:8]:
-                            logger.info(f"  - {change}")
-                else:
-                    logger.info("ℹ️ 本章节无角色状态、关系或组织变化")
-                    
-            except Exception as state_error:
-                # 角色状态更新失败不应影响整个分析流程
-                logger.error(f"⚠️ 更新角色状态、关系和组织失败: {str(state_error)}", exc_info=True)
-        
-        # 🏛️ 更新组织自身状态（根据分析结果）
-        if analysis_result.get('organization_states'):
-            try:
-                from app.services.character_state_update_service import CharacterStateUpdateService
-                
-                logger.info(f"🏛️ 开始根据分析结果更新组织自身状态...")
-                async with write_lock:
-                    org_state_result = await CharacterStateUpdateService.update_organization_states(
-                        db=db_session,
-                        project_id=project_id,
-                        organization_states=analysis_result.get('organization_states', []),
-                        chapter_number=chapter.chapter_number
-                    )
-                
-                if org_state_result['updated_count'] > 0:
-                    logger.info(
-                        f"✅ 组织状态更新: {org_state_result['updated_count']}个组织"
-                    )
-                    if org_state_result['changes']:
-                        for change in org_state_result['changes'][:5]:
-                            logger.info(f"  - {change}")
-                else:
-                    logger.info("ℹ️ 本章节无组织自身状态变化")
-                    
-            except Exception as org_state_error:
-                # 组织状态更新失败不应影响整个分析流程
-                logger.error(f"⚠️ 更新组织自身状态失败: {str(org_state_error)}", exc_info=True)
-        
-        # 🔮 自动更新伏笔状态（根据分析结果）
-        if analysis_result.get('foreshadows'):
-            try:
-                logger.info(f"🔮 开始根据分析结果自动更新伏笔状态...")
-                async with write_lock:
-                    foreshadow_stats = await foreshadow_service.auto_update_from_analysis(
-                        db=db_session,
-                        project_id=project_id,
-                        chapter_id=chapter_id,
-                        chapter_number=chapter.chapter_number,
-                        analysis_foreshadows=analysis_result.get('foreshadows', [])
-                    )
-                
-                if foreshadow_stats['planted_count'] > 0 or foreshadow_stats['resolved_count'] > 0:
-                    logger.info(
-                        f"✅ 伏笔自动更新: 埋入{foreshadow_stats['planted_count']}个, "
-                        f"回收{foreshadow_stats['resolved_count']}个"
-                    )
-                else:
-                    logger.info("ℹ️ 本章节无新的伏笔状态变化")
-                    
-            except Exception as foreshadow_error:
-                # 伏笔更新失败不应影响整个分析流程
-                logger.error(f"⚠️ 自动更新伏笔失败: {str(foreshadow_error)}", exc_info=True)
-        else:
-            logger.debug("📋 分析结果中无伏笔信息，跳过伏笔自动更新")
-        
-        update_success = await _set_analysis_task_terminal_state(
-            user_id, task_id, "completed"
-        )
-        if update_success:
-            logger.info(f"✅ 章节分析完成: {chapter_id}, 提取{len(memories)}条记忆")
-        else:
-            logger.error(f"❌ 章节分析完成但无法更新任务终态: {chapter_id}")
-        return update_success
+            logger.info(
+                f"✅ 章节分析完成: {chapter_id}, "
+                f"提取{materialization.memory_count}条记忆"
+            )
+        return True
         
     except Exception as e:
         logger.error(f"❌ 后台分析异常: {str(e)}", exc_info=True)
@@ -1511,15 +926,13 @@ async def retry_analysis_comparison_candidate(chapter_id: str, batch_id: str, ca
 @router.post("/{chapter_id}/analysis-comparison-batches/{batch_id}/adopt/{candidate_id}", response_model=LLMComparisonBatchResponse)
 async def adopt_analysis_comparison_candidate(chapter_id: str, batch_id: str, candidate_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = getattr(request.state, "user_id", None)
-    try:
-        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
-        if batch.target_type != "analysis" or batch.target_id != chapter_id:
-            raise ComparisonNotFoundError("分析候选不存在")
-        batch, _ = await adopt_candidate(db, batch_id=batch_id, candidate_id=candidate_id, user_id=user_id, apply_target=apply_analysis_candidate)
-        await db.refresh(batch)  # 采用后属性已过期，刷新避免响应构建惰性加载报错
-        return await _chapter_comparison_response(db, batch)
-    except (ComparisonNotFoundError, ComparisonStateError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+    if batch.target_type != "analysis" or batch.target_id != chapter_id:
+        raise HTTPException(status_code=404, detail="分析候选不存在")
+    raise HTTPException(
+        status_code=409,
+        detail="分析候选采用正在整改，候选仍可预览和重试，暂不能写入正式分析",
+    )
 
 
 @router.post("/{chapter_id}/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建章节多模型候选")
@@ -1594,20 +1007,13 @@ async def adopt_chapter_comparison_candidate(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = getattr(request.state, "user_id", None)
-    try:
-        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
-        if batch.target_type != "chapter" or batch.target_id != chapter_id:
-            raise ComparisonNotFoundError("章节候选批次不存在")
-        batch, _ = await adopt_candidate(
-            db, batch_id=batch_id, candidate_id=candidate_id,
-            user_id=user_id, apply_target=apply_chapter_candidate,
-        )
-        await db.refresh(batch)  # 采用后属性已过期，刷新避免响应构建惰性加载报错
-        return await _chapter_comparison_response(db, batch)
-    except ComparisonNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except ComparisonStateError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+    if batch.target_type != "chapter" or batch.target_id != chapter_id:
+        raise HTTPException(status_code=404, detail="章节候选批次不存在")
+    raise HTTPException(
+        status_code=409,
+        detail="章节候选采用正在整改，候选仍可预览、编辑和重试，暂不能写入正式正文",
+    )
 
 
 @router.put("/{chapter_id}/comparison-batches/{batch_id}/candidates/{candidate_id}", response_model=LLMComparisonCandidateResponse, summary="编辑章节候选")
@@ -3820,6 +3226,18 @@ async def trigger_chapter_analysis(
             "chapter_id": chapter_id,
             "status": existing_task.status,
             "message": "已有分析任务正在执行"
+        }
+    if (
+        existing_task
+        and existing_task.status == "completed"
+        and existing_task.materialized_at is not None
+        and analysis_task_matches_content(existing_task, chapter)
+    ):
+        return {
+            "task_id": existing_task.id,
+            "chapter_id": chapter_id,
+            "status": existing_task.status,
+            "message": "当前正文已完成分析",
         }
     
     # 创建分析任务

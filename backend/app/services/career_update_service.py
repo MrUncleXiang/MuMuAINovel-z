@@ -18,7 +18,8 @@ class CareerUpdateService:
         project_id: str,
         character_states: List[Dict[str, Any]],
         chapter_id: str,
-        chapter_number: int
+        chapter_number: int,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         根据章节分析结果更新角色职业
@@ -115,7 +116,7 @@ class CareerUpdateService:
                         updated_count += 1
         
         # 提交所有更改
-        if updated_count > 0:
+        if updated_count > 0 and commit:
             await db.commit()
             logger.info(f"✅ 职业更新完成: 共更新了 {updated_count} 个角色的职业信息")
         else:

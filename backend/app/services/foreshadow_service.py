@@ -1065,7 +1065,8 @@ class ForeshadowService:
         self,
         db: AsyncSession,
         project_id: str,
-        chapter_id: str
+        chapter_id: str,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         清理章节分析产生的伏笔（用于重新分析前的清理）
@@ -1106,7 +1107,8 @@ class ForeshadowService:
             # 步骤2: 回退在本章被回收的伏笔（恢复为 planted 状态）
             reverted_count = await self._revert_chapter_resolutions(db, project_id, chapter_id)
             
-            await db.commit()
+            if commit:
+                await db.commit()
             
             if cleaned_count > 0 or reverted_count > 0:
                 logger.info(f"🧹 已清理章节 {chapter_id[:8]}: 删除{cleaned_count}个分析伏笔, 回退{reverted_count}个回收状态")
@@ -1248,7 +1250,8 @@ class ForeshadowService:
         project_id: str,
         chapter_id: str,
         chapter_number: int,
-        analysis_foreshadows: List[Dict[str, Any]]
+        analysis_foreshadows: List[Dict[str, Any]],
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         根据章节分析结果自动更新伏笔状态
@@ -1468,7 +1471,8 @@ class ForeshadowService:
                     stats["errors"].append(error_msg)
                     logger.error(f"❌ {error_msg}")
             
-            await db.commit()
+            if commit:
+                await db.commit()
             
             logger.info(f"📊 伏笔自动更新完成: 埋入{stats['planted_count']}个, 回收{stats['resolved_count']}个, 创建{stats['created_count']}个")
             return stats

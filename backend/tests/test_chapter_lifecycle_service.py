@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import app.database  # noqa: F401 - initialize the model registry as production does
 
@@ -10,6 +11,11 @@ from app.services.chapter_lifecycle_service import (
     check_previous_analysis_ready,
     create_pending_analysis_task,
 )
+from app.services.chapter_analysis_materialization_service import (
+    materialize_chapter_analysis,
+)
+from app.services.plot_analyzer import PlotAnalyzer
+from app.services.prompt_service import PromptService
 
 
 class FakeSession:
@@ -18,6 +24,56 @@ class FakeSession:
 
     async def scalar(self, _statement):
         return self.scalar_results.pop(0)
+
+
+class MaterializationSession(FakeSession):
+    def __init__(self, *scalar_results):
+        super().__init__(*scalar_results)
+        self.added = []
+        self.commit_count = 0
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def execute(self, _statement):
+        return None
+
+    async def commit(self):
+        self.commit_count += 1
+
+
+class FakeAnalyzer:
+    def generate_analysis_summary(self, _analysis):
+        return "report"
+
+    def extract_memories_from_analysis(self, **_kwargs):
+        return [{
+            "type": "chapter_summary",
+            "content": "summary",
+            "title": "chapter summary",
+            "metadata": {"chapter_id": "chapter-1", "chapter_number": 1},
+        }]
+
+
+class FakeForeshadowService:
+    async def clean_chapter_analysis_foreshadows(self, **_kwargs):
+        return {"cleaned_count": 0}
+
+    async def auto_update_from_analysis(self, **_kwargs):
+        return {"errors": []}
+
+
+class FakeMemoryService:
+    def __init__(self, added_count=1):
+        self.added_count = added_count
+        self.delete_count = 0
+
+    async def delete_chapter_memories(self, **_kwargs):
+        self.delete_count += 1
+        return True
+
+    async def batch_add_memories(self, **_kwargs):
+        return self.added_count
 
 
 class ChapterLifecycleServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +154,118 @@ class ChapterLifecycleServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(ready)
+
+
+class ChapterAnalysisMaterializationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.chapter = SimpleNamespace(
+            id="chapter-1",
+            project_id="project-1",
+            chapter_number=1,
+            title="第一章",
+            content="formal content",
+            word_count=14,
+        )
+        self.task = SimpleNamespace(
+            id="task-1",
+            content_hash=chapter_content_hash(self.chapter.content),
+            status="running",
+            progress=60,
+            error_message=None,
+            completed_at=None,
+            materialized_at=None,
+        )
+
+    async def test_materializes_relational_and_vector_state_before_completion(self):
+        db = MaterializationSession(self.chapter, None, None)
+
+        result = await materialize_chapter_analysis(
+            db=db,
+            user_id="user-1",
+            chapter=self.chapter,
+            task=self.task,
+            analysis={"plot_stage": "发展", "hooks": [], "foreshadows": []},
+            analyzer=FakeAnalyzer(),
+            memory_service=FakeMemoryService(),
+            foreshadow_service=FakeForeshadowService(),
+        )
+
+        self.assertEqual(result.memory_count, 1)
+        self.assertEqual(self.task.status, "completed")
+        self.assertIsNotNone(self.task.materialized_at)
+        self.assertEqual(db.commit_count, 1)
+        self.assertEqual(len(db.added), 2)
+
+    async def test_vector_failure_does_not_mark_task_completed(self):
+        db = MaterializationSession(self.chapter, None, None)
+        memory = FakeMemoryService(added_count=0)
+
+        with self.assertRaisesRegex(RuntimeError, "向量记忆写入不完整"):
+            await materialize_chapter_analysis(
+                db=db,
+                user_id="user-1",
+                chapter=self.chapter,
+                task=self.task,
+                analysis={"hooks": [], "foreshadows": []},
+                analyzer=FakeAnalyzer(),
+                memory_service=memory,
+                foreshadow_service=FakeForeshadowService(),
+            )
+
+        self.assertEqual(self.task.status, "running")
+        self.assertEqual(db.commit_count, 0)
+        self.assertEqual(memory.delete_count, 2)
+
+    async def test_same_content_is_not_materialized_twice(self):
+        prior = SimpleNamespace(id="task-prior")
+        db = MaterializationSession(self.chapter, prior)
+
+        result = await materialize_chapter_analysis(
+            db=db,
+            user_id="user-1",
+            chapter=self.chapter,
+            task=self.task,
+            analysis={},
+            analyzer=FakeAnalyzer(),
+            memory_service=FakeMemoryService(),
+            foreshadow_service=FakeForeshadowService(),
+        )
+
+        self.assertTrue(result.already_materialized)
+        self.assertEqual(self.task.status, "completed")
+        self.assertEqual(db.added, [])
+        self.assertEqual(db.commit_count, 1)
+
+
+class ChapterAnalysisPromptTests(unittest.IsolatedAsyncioTestCase):
+    async def test_canonical_prompt_contains_dynamic_story_context(self):
+        template = (
+            "{chapter_number}|{title}|{word_count}|{content}|"
+            "{existing_foreshadows}|{characters_info}"
+        )
+        with patch.object(
+            PromptService,
+            "get_template",
+            AsyncMock(return_value=template),
+        ):
+            prompt = await PlotAnalyzer.build_analysis_prompt(
+                chapter_number=2,
+                title="第二章",
+                word_count=4,
+                content="正文",
+                user_id="user-1",
+                db=object(),
+                existing_foreshadows=[{
+                    "id": "foreshadow-1",
+                    "title": "旧伏笔",
+                    "content": "秘密",
+                    "plant_chapter_number": 1,
+                }],
+                characters_info="角色甲 | 主职业: 剑客",
+            )
+
+        self.assertIn("foreshadow-1", prompt)
+        self.assertIn("角色甲 | 主职业: 剑客", prompt)
 
 
 if __name__ == "__main__":

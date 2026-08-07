@@ -35,7 +35,8 @@ class CharacterStateUpdateService:
         project_id: str,
         character_states: List[Dict[str, Any]],
         chapter_id: str,
-        chapter_number: int
+        chapter_number: int,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         根据章节分析结果更新角色状态和关系
@@ -170,7 +171,7 @@ class CharacterStateUpdateService:
             result["relationship_updated_count"] +
             result["org_updated_count"]
         )
-        if total_changes > 0:
+        if total_changes > 0 and commit:
             await db.commit()
             logger.info(
                 f"✅ 角色状态更新完成: "
@@ -652,7 +653,8 @@ class CharacterStateUpdateService:
         db: AsyncSession,
         project_id: str,
         organization_states: List[Dict[str, Any]],
-        chapter_number: int
+        chapter_number: int,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         根据章节分析结果更新组织自身状态（势力等级、据点、宗旨等）
@@ -798,7 +800,7 @@ class CharacterStateUpdateService:
                     f"  ❌ 更新组织 {org_state.get('organization_name', '未知')} 状态失败: {str(item_error)}"
                 )
         
-        if result["updated_count"] > 0:
+        if result["updated_count"] > 0 and commit:
             await db.commit()
             logger.info(f"✅ 组织状态更新完成: {result['updated_count']}个组织")
         

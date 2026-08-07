@@ -28,6 +28,39 @@ class PlotAnalyzer:
         """
         self.ai_service = ai_service
         logger.info("✅ PlotAnalyzer初始化成功")
+
+    @staticmethod
+    async def build_analysis_prompt(
+        *,
+        chapter_number: int,
+        title: str,
+        content: str,
+        word_count: int,
+        user_id: str = None,
+        db: AsyncSession = None,
+        existing_foreshadows: Optional[List[Dict[str, Any]]] = None,
+        characters_info: str = "",
+    ) -> str:
+        """Build the canonical prompt shared by formal and candidate analysis."""
+        try:
+            if user_id and db:
+                template = await PromptService.get_template("PLOT_ANALYSIS", user_id, db)
+            else:
+                template = PromptService.PLOT_ANALYSIS
+        except Exception as exc:
+            logger.warning(f"⚠️ 获取提示词模板失败，使用默认模板: {str(exc)}")
+            template = PromptService.PLOT_ANALYSIS
+
+        foreshadows_text = PlotAnalyzer._format_existing_foreshadows(existing_foreshadows)
+        return PromptService.format_prompt(
+            template,
+            chapter_number=chapter_number,
+            title=title,
+            word_count=word_count,
+            content=content[:8000],
+            existing_foreshadows=foreshadows_text,
+            characters_info=characters_info if characters_info else "（暂无角色信息）",
+        )
     
     async def analyze_chapter(
         self,
@@ -62,32 +95,16 @@ class PlotAnalyzer:
         """
         logger.info(f"🔍 开始分析第{chapter_number}章: {title}")
         
-        # 如果内容过长,截取前8000字(避免超token)
-        analysis_content = content[:8000] if len(content) > 8000 else content
-        
-        # 获取自定义提示词模板
-        try:
-            if user_id and db:
-                template = await PromptService.get_template("PLOT_ANALYSIS", user_id, db)
-            else:
-                # 降级到系统默认模板
-                template = PromptService.PLOT_ANALYSIS
-        except Exception as e:
-            logger.warning(f"⚠️ 获取提示词模板失败，使用默认模板: {str(e)}")
-            template = PromptService.PLOT_ANALYSIS
-        
-        # 格式化已有伏笔列表
-        foreshadows_text = self._format_existing_foreshadows(existing_foreshadows)
-        
-        # 格式化提示词
-        prompt = PromptService.format_prompt(
-            template,
+        analysis_content = content[:8000]
+        prompt = await self.build_analysis_prompt(
             chapter_number=chapter_number,
             title=title,
             word_count=word_count,
             content=analysis_content,
-            existing_foreshadows=foreshadows_text,
-            characters_info=characters_info if characters_info else "（暂无角色信息）"
+            user_id=user_id,
+            db=db,
+            existing_foreshadows=existing_foreshadows,
+            characters_info=characters_info,
         )
         
         last_error = None
@@ -193,7 +210,8 @@ class PlotAnalyzer:
         logger.error(f"❌ 第{chapter_number}章分析失败: {last_error}")
         return None
     
-    def _format_existing_foreshadows(self, foreshadows: Optional[List[Dict[str, Any]]]) -> str:
+    @staticmethod
+    def _format_existing_foreshadows(foreshadows: Optional[List[Dict[str, Any]]]) -> str:
         """
         格式化已有伏笔列表，用于注入到分析提示词中
         

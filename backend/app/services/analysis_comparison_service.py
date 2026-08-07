@@ -11,21 +11,37 @@ from app.models.memory import PlotAnalysis
 from app.schemas.chapter import AnalysisComparisonCreateRequest
 from app.schemas.llm_comparison import LLMComparisonBatchCreate, LLMComparisonSelection
 from app.services.llm_comparison_service import CandidateGenerationResult, create_batch
+from app.services.chapter_analysis_context_service import build_chapter_analysis_context
+from app.services.chapter_lifecycle_service import chapter_content_hash
+from app.services.foreshadow_service import foreshadow_service
 from app.services.plot_analyzer import PlotAnalyzer
-from app.services.prompt_service import PromptService
 
 
 async def create_analysis_comparison(db: AsyncSession, *, chapter: Chapter, user_id: str, payload: AnalysisComparisonCreateRequest):
-    template = await PromptService.get_template("PLOT_ANALYSIS", user_id, db)
-    prompt = PromptService.format_prompt(
-        template, chapter_number=chapter.chapter_number, title=chapter.title,
-        word_count=chapter.word_count or len(chapter.content or ""), content=(chapter.content or "")[:8000],
-        existing_foreshadows="（候选预览不读取或修改动态伏笔状态）", characters_info="（候选预览仅分析正文中出现的角色）",
+    context = await build_chapter_analysis_context(
+        db=db,
+        chapter=chapter,
+        foreshadow_service=foreshadow_service,
+    )
+    prompt = await PlotAnalyzer.build_analysis_prompt(
+        chapter_number=chapter.chapter_number,
+        title=chapter.title,
+        word_count=chapter.word_count or len(chapter.content or ""),
+        content=chapter.content or "",
+        user_id=user_id,
+        db=db,
+        existing_foreshadows=context.existing_foreshadows,
+        characters_info=context.characters_info,
     )
     return await create_batch(db, user_id=user_id, data=LLMComparisonBatchCreate(
         project_id=chapter.project_id, target_type="analysis", target_id=chapter.id,
         usage_type="chapter_analysis_compare",
-        input_snapshot={"chapter_id": chapter.id, "content": chapter.content or "", "updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None},
+        input_snapshot={
+            "chapter_id": chapter.id,
+            "content": chapter.content or "",
+            "content_hash": chapter_content_hash(chapter.content),
+            "updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None,
+        },
         prompt_snapshot=prompt, parameters_snapshot={"temperature": 0.3, "auto_mcp": False},
         selections=[LLMComparisonSelection(**item.model_dump()) for item in payload.selections],
     ))
