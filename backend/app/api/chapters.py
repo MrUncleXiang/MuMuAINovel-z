@@ -411,6 +411,15 @@ async def update_chapter(
             await ensure_chapter_content_replaceable(db, chapter, update_data["content"])
         except FormalChapterConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+        if chapter_content_hash(chapter.content) != chapter_content_hash(update_data["content"]):
+            from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
+
+            await invalidate_checkpoints_from_chapter(
+                db,
+                project_id=chapter.project_id,
+                chapter_number=chapter.chapter_number,
+                reason=f"第{chapter.chapter_number}章正文被手动修改",
+            )
     for field, value in update_data.items():
         setattr(chapter, field, value)
     

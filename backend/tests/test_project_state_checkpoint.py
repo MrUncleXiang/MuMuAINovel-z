@@ -12,6 +12,7 @@ from app.models.memory import StoryMemory
 from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1
 from app.services.project_state_checkpoint_service import serialize_snapshot_entity
 from app.services.project_state_checkpoint_service import create_project_state_checkpoint
+from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
 
 
 class FakeCheckpointSession:
@@ -27,6 +28,10 @@ class FakeCheckpointSession:
 
     async def flush(self):
         return None
+
+    async def execute(self, statement):
+        self.executed = statement
+        return SimpleNamespace(rowcount=2)
 
 
 class ProjectStateSnapshotSchemaTests(unittest.TestCase):
@@ -141,6 +146,21 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(checkpoint.status, "invalid")
         self.assertIn("缺少上一章", checkpoint.invalid_reason)
         self.assertIn("后续分析", checkpoint.invalid_reason)
+
+    async def test_chapter_change_invalidates_all_dependent_checkpoints(self):
+        db = FakeCheckpointSession()
+
+        count = await invalidate_checkpoints_from_chapter(
+            db,
+            project_id="project-1",
+            chapter_number=8,
+            reason="第8章正文被修改",
+        )
+
+        self.assertEqual(count, 2)
+        compiled = str(db.executed.compile(compile_kwargs={"literal_binds": True}))
+        self.assertIn("chapter_number >= 8", compiled)
+        self.assertIn("status = 'valid'", compiled)
 
 
 if __name__ == "__main__":

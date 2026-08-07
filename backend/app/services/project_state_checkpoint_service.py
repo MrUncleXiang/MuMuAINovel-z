@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.career import Career, CharacterCareer
@@ -148,3 +148,27 @@ async def create_project_state_checkpoint(
     db.add(checkpoint)
     await db.flush()
     return checkpoint
+
+
+async def invalidate_checkpoints_from_chapter(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    chapter_number: int,
+    reason: str,
+) -> int:
+    """Invalidate the changed chapter boundary and every dependent boundary."""
+    result = await db.execute(
+        update(ProjectStateCheckpoint)
+        .where(
+            ProjectStateCheckpoint.project_id == project_id,
+            ProjectStateCheckpoint.chapter_number >= chapter_number,
+            ProjectStateCheckpoint.status == "valid",
+        )
+        .values(
+            status="invalid",
+            invalid_reason=reason[:1000],
+            invalidated_at=datetime.now(),
+        )
+    )
+    return int(getattr(result, "rowcount", 0) or 0)

@@ -406,6 +406,15 @@ async def rollback_to_checkpoint(
             Chapter.chapter_number > target.trigger_chapter_number,
         )
     )).all())
+    if affected:
+        from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
+
+        await invalidate_checkpoints_from_chapter(
+            db,
+            project_id=pipeline.project_id,
+            chapter_number=min(chapter.chapter_number for chapter in affected),
+            reason=f"流水线回滚到第{target.trigger_chapter_number}章",
+        )
     for chapter in affected:
         chapter.content = ""
         chapter.summary = ""

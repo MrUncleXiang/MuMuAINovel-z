@@ -13,6 +13,7 @@ from app.services.chapter_lifecycle_service import (
     chapter_content_hash,
     create_pending_analysis_task,
 )
+from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
 
 
 class FormalChapterConflictError(ValueError):
@@ -74,7 +75,15 @@ async def persist_formal_chapter_content(
     if expected_content_hash and chapter_content_hash(chapter.content) != expected_content_hash:
         raise FormalChapterConflictError("章节正文在生成期间已被修改，请重新生成")
 
+    content_changed = chapter_content_hash(chapter.content) != chapter_content_hash(content)
     await ensure_chapter_content_replaceable(db, chapter, content)
+    if content_changed:
+        await invalidate_checkpoints_from_chapter(
+            db,
+            project_id=chapter.project_id,
+            chapter_number=chapter.chapter_number,
+            reason=f"第{chapter.chapter_number}章正式正文已更新",
+        )
 
     project = await db.scalar(
         select(Project).where(Project.id == chapter.project_id).with_for_update()
