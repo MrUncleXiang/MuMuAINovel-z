@@ -454,24 +454,47 @@ export default function BookshelfPage({
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8, position: 'relative', zIndex: 2 }}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={showCoverFace ? <BookOutlined /> : <SwapOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleProjectFace(project.id);
-                        }}
-                        style={showCoverFace ? {
-                          color: token.colorWhite,
-                          borderRadius: 999,
-                          background: 'rgba(255,255,255,0.18)',
-                          backdropFilter: 'blur(10px)',
-                          border: '1px solid rgba(255,255,255,0.22)',
-                        } : undefined}
-                      >
-                        {showCoverFace ? '切换回详情' : (coverReady ? '查看封面' : '封面操作')}
-                      </Button>
+                      <Space size={6} wrap>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={showCoverFace ? <BookOutlined /> : <SwapOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleProjectFace(project.id);
+                          }}
+                          style={showCoverFace ? {
+                            color: token.colorWhite,
+                            borderRadius: 999,
+                            background: 'rgba(8,18,32,0.68)',
+                            backdropFilter: 'blur(10px)',
+                            border: '1px solid rgba(255,255,255,0.34)',
+                            boxShadow: '0 3px 10px rgba(0,0,0,0.28)',
+                          } : undefined}
+                        >
+                          {showCoverFace ? '切换回详情' : (coverReady ? '查看封面' : '封面操作')}
+                        </Button>
+                        <Button
+                          type={showCoverFace ? 'text' : 'default'}
+                          size="small"
+                          icon={<CopyOutlined />}
+                          title="创建独立副本"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCloneProject(project);
+                          }}
+                          style={showCoverFace ? {
+                            color: token.colorWhite,
+                            borderRadius: 999,
+                            background: 'rgba(8,18,32,0.68)',
+                            backdropFilter: 'blur(10px)',
+                            border: '1px solid rgba(255,255,255,0.34)',
+                            boxShadow: '0 3px 10px rgba(0,0,0,0.28)',
+                          } : undefined}
+                        >
+                          创建副本
+                        </Button>
+                      </Space>
                     </div>
 
                     {showCoverFace ? (
@@ -918,20 +941,6 @@ export default function BookshelfPage({
 
                               <div style={{ justifySelf: 'end' }}>
                                 <Space size={2}>
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined style={{ fontSize: isMobile ? 12 : 14 }} />}
-                                    title="创建独立副本"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onCloneProject(project);
-                                    }}
-                                    style={{
-                                      padding: isMobile ? '2px 4px' : '4px 8px',
-                                      borderRadius: 8,
-                                    }}
-                                  />
                                   <Button
                                     type="text"
                                     size="small"
