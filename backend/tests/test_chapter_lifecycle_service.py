@@ -16,6 +16,10 @@ from app.services.chapter_analysis_materialization_service import (
 )
 from app.services.plot_analyzer import PlotAnalyzer
 from app.services.prompt_service import PromptService
+from app.services.formal_chapter_service import (
+    FormalChapterConflictError,
+    persist_formal_chapter_content,
+)
 
 
 class FakeSession:
@@ -41,6 +45,9 @@ class MaterializationSession(FakeSession):
     async def commit(self):
         self.commit_count += 1
 
+    async def refresh(self, _value):
+        return None
+
 
 class FakeAnalyzer:
     def generate_analysis_summary(self, _analysis):
@@ -61,6 +68,9 @@ class FakeForeshadowService:
 
     async def auto_update_from_analysis(self, **_kwargs):
         return {"errors": []}
+
+    async def auto_plant_pending_foreshadows(self, **_kwargs):
+        return {"planted_count": 0}
 
 
 class FakeMemoryService:
@@ -266,6 +276,79 @@ class ChapterAnalysisPromptTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("foreshadow-1", prompt)
         self.assertIn("角色甲 | 主职业: 剑客", prompt)
+
+
+class FormalChapterServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_persists_content_history_and_analysis_task_together(self):
+        chapter = SimpleNamespace(
+            id="chapter-1",
+            project_id="project-1",
+            chapter_number=1,
+            title="第一章",
+            content=None,
+            word_count=0,
+            status="draft",
+            summary=None,
+        )
+        project = SimpleNamespace(current_words=0)
+        db = MaterializationSession(chapter, project)
+
+        result = await persist_formal_chapter_content(
+            db=db,
+            chapter_id=chapter.id,
+            user_id="user-1",
+            content="正式正文",
+            prompt="prompt",
+            model="model-1",
+            foreshadow_service=FakeForeshadowService(),
+            expected_content_hash=chapter_content_hash(None),
+        )
+
+        self.assertEqual(result.chapter.content, "正式正文")
+        self.assertEqual(result.analysis_task.content_hash, chapter_content_hash("正式正文"))
+        self.assertEqual(project.current_words, 4)
+        self.assertEqual(db.commit_count, 1)
+        self.assertEqual(len(db.added), 2)
+
+    async def test_rejects_concurrent_content_change(self):
+        chapter = SimpleNamespace(id="chapter-1", content="user edit")
+        db = MaterializationSession(chapter)
+
+        with self.assertRaisesRegex(FormalChapterConflictError, "生成期间已被修改"):
+            await persist_formal_chapter_content(
+                db=db,
+                chapter_id=chapter.id,
+                user_id="user-1",
+                content="generated",
+                prompt="prompt",
+                model="model-1",
+                foreshadow_service=FakeForeshadowService(),
+                expected_content_hash=chapter_content_hash("old"),
+            )
+
+        self.assertEqual(db.commit_count, 0)
+
+    async def test_rejects_replacing_content_with_materialized_analysis(self):
+        chapter = SimpleNamespace(
+            id="chapter-1",
+            project_id="project-1",
+            content="analyzed content",
+        )
+        db = MaterializationSession(chapter, "analysis-task-id")
+
+        with self.assertRaisesRegex(FormalChapterConflictError, "不能直接覆盖"):
+            await persist_formal_chapter_content(
+                db=db,
+                chapter_id=chapter.id,
+                user_id="user-1",
+                content="replacement",
+                prompt="prompt",
+                model="model-1",
+                foreshadow_service=FakeForeshadowService(),
+                expected_content_hash=chapter_content_hash(chapter.content),
+            )
+
+        self.assertEqual(db.commit_count, 0)
 
 
 if __name__ == "__main__":

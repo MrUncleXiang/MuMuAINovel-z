@@ -1488,7 +1488,8 @@ class ForeshadowService:
         project_id: str,
         chapter_id: str,
         chapter_number: int,
-        chapter_content: str
+        chapter_content: str,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         自动将计划在本章埋入的伏笔标记为已埋入
@@ -1536,7 +1537,8 @@ class ForeshadowService:
                     stats["planted_ids"].append(fs.id)
                     logger.info(f"✅ 自动标记伏笔已埋入: {fs.title} (第{chapter_number}章)")
             
-            await db.commit()
+            if commit:
+                await db.commit()
             
             if stats["planted_count"] > 0:
                 logger.info(f"📊 自动埋入伏笔: 检查{stats['checked_count']}个, 埋入{stats['planted_count']}个")
