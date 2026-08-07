@@ -1,5 +1,7 @@
 import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import app.database  # noqa: F401 - initialize model registry
 from pydantic import ValidationError
@@ -9,6 +11,22 @@ from app.models.foreshadow import Foreshadow
 from app.models.memory import StoryMemory
 from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1
 from app.services.project_state_checkpoint_service import serialize_snapshot_entity
+from app.services.project_state_checkpoint_service import create_project_state_checkpoint
+
+
+class FakeCheckpointSession:
+    def __init__(self, *scalar_values):
+        self.scalar_values = list(scalar_values)
+        self.added = []
+
+    async def scalar(self, _statement):
+        return self.scalar_values.pop(0)
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def flush(self):
+        return None
 
 
 class ProjectStateSnapshotSchemaTests(unittest.TestCase):
@@ -72,6 +90,57 @@ class ProjectStateSnapshotSchemaTests(unittest.TestCase):
                 "chapter_number": 1,
                 "unknown_entities": [],
             })
+
+
+class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_chapter_creates_valid_checkpoint(self):
+        db = FakeCheckpointSession(None, None, 4)
+        chapter = SimpleNamespace(
+            id="chapter-1",
+            project_id="project-1",
+            chapter_number=1,
+        )
+        task = SimpleNamespace(id="task-1", content_hash="hash-1")
+        snapshot = ProjectStateSnapshotV1(chapter_number=1)
+
+        with patch(
+            "app.services.project_state_checkpoint_service.capture_project_state",
+            AsyncMock(return_value=snapshot),
+        ):
+            checkpoint = await create_project_state_checkpoint(
+                db,
+                chapter=chapter,
+                analysis_task=task,
+            )
+
+        self.assertEqual(checkpoint.status, "valid")
+        self.assertIsNone(checkpoint.invalid_reason)
+        self.assertEqual(checkpoint.config_version, 4)
+        self.assertEqual(checkpoint.state_json["schema_version"], 1)
+        self.assertEqual(db.added, [checkpoint])
+
+    async def test_non_continuous_historical_analysis_is_not_exposed(self):
+        db = FakeCheckpointSession(None, None, "later-task", None)
+        chapter = SimpleNamespace(
+            id="chapter-3",
+            project_id="project-1",
+            chapter_number=3,
+        )
+        task = SimpleNamespace(id="task-3", content_hash="hash-3")
+
+        with patch(
+            "app.services.project_state_checkpoint_service.capture_project_state",
+            AsyncMock(return_value=ProjectStateSnapshotV1(chapter_number=3)),
+        ):
+            checkpoint = await create_project_state_checkpoint(
+                db,
+                chapter=chapter,
+                analysis_task=task,
+            )
+
+        self.assertEqual(checkpoint.status, "invalid")
+        self.assertIn("缺少上一章", checkpoint.invalid_reason)
+        self.assertIn("后续分析", checkpoint.invalid_reason)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ from app.services.career_update_service import CareerUpdateService
 from app.services.character_state_update_service import CharacterStateUpdateService
 from app.services.chapter_lifecycle_service import analysis_task_matches_content
 from app.services.foreshadow_service import ForeshadowService
+from app.services.project_state_checkpoint_service import create_project_state_checkpoint
 
 
 class StaleAnalysisError(ValueError):
@@ -217,6 +218,12 @@ async def materialize_chapter_analysis(
                 chapter_id=chapter.id,
             )
             raise RuntimeError("向量记忆写入不完整")
+
+    await create_project_state_checkpoint(
+        db,
+        chapter=chapter,
+        analysis_task=task,
+    )
 
     task.status = "completed"
     task.progress = 100

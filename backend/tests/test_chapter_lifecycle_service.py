@@ -48,6 +48,9 @@ class MaterializationSession(FakeSession):
     async def refresh(self, _value):
         return None
 
+    async def flush(self):
+        return None
+
 
 class FakeAnalyzer:
     def generate_analysis_summary(self, _analysis):
@@ -189,42 +192,52 @@ class ChapterAnalysisMaterializationTests(unittest.IsolatedAsyncioTestCase):
     async def test_materializes_relational_and_vector_state_before_completion(self):
         db = MaterializationSession(self.chapter, None, None)
 
-        result = await materialize_chapter_analysis(
-            db=db,
-            user_id="user-1",
-            chapter=self.chapter,
-            task=self.task,
-            analysis={"plot_stage": "发展", "hooks": [], "foreshadows": []},
-            analyzer=FakeAnalyzer(),
-            memory_service=FakeMemoryService(),
-            foreshadow_service=FakeForeshadowService(),
-        )
+        with patch(
+            "app.services.chapter_analysis_materialization_service.create_project_state_checkpoint",
+            AsyncMock(),
+        ) as create_checkpoint:
+            result = await materialize_chapter_analysis(
+                db=db,
+                user_id="user-1",
+                chapter=self.chapter,
+                task=self.task,
+                analysis={"plot_stage": "发展", "hooks": [], "foreshadows": []},
+                analyzer=FakeAnalyzer(),
+                memory_service=FakeMemoryService(),
+                foreshadow_service=FakeForeshadowService(),
+            )
 
         self.assertEqual(result.memory_count, 1)
         self.assertEqual(self.task.status, "completed")
         self.assertIsNotNone(self.task.materialized_at)
         self.assertEqual(db.commit_count, 1)
         self.assertEqual(len(db.added), 2)
+        create_checkpoint.assert_awaited_once()
 
     async def test_vector_failure_does_not_mark_task_completed(self):
         db = MaterializationSession(self.chapter, None, None)
         memory = FakeMemoryService(added_count=0)
 
-        with self.assertRaisesRegex(RuntimeError, "向量记忆写入不完整"):
-            await materialize_chapter_analysis(
-                db=db,
-                user_id="user-1",
-                chapter=self.chapter,
-                task=self.task,
-                analysis={"hooks": [], "foreshadows": []},
-                analyzer=FakeAnalyzer(),
-                memory_service=memory,
-                foreshadow_service=FakeForeshadowService(),
-            )
+        with patch(
+            "app.services.chapter_analysis_materialization_service.create_project_state_checkpoint",
+            AsyncMock(),
+        ) as create_checkpoint:
+            with self.assertRaisesRegex(RuntimeError, "向量记忆写入不完整"):
+                await materialize_chapter_analysis(
+                    db=db,
+                    user_id="user-1",
+                    chapter=self.chapter,
+                    task=self.task,
+                    analysis={"hooks": [], "foreshadows": []},
+                    analyzer=FakeAnalyzer(),
+                    memory_service=memory,
+                    foreshadow_service=FakeForeshadowService(),
+                )
 
         self.assertEqual(self.task.status, "running")
         self.assertEqual(db.commit_count, 0)
         self.assertEqual(memory.delete_count, 2)
+        create_checkpoint.assert_not_awaited()
 
     async def test_same_content_is_not_materialized_twice(self):
         prior = SimpleNamespace(id="task-prior")
