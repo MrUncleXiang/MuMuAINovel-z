@@ -31,6 +31,7 @@ from app.schemas.project_creation_config import (
     ProjectCreationRuntimeSnapshot,
 )
 from app.schemas.project_state_checkpoint import ProjectStateCheckpointResponse
+from app.schemas.project_clone import ProjectCloneRequest, ProjectCloneResponse
 from app.schemas.import_export import (
     ExportOptions,
     ImportValidationResult,
@@ -47,6 +48,7 @@ from app.services.project_state_checkpoint_service import (
     list_valid_project_checkpoints,
     register_latest_reliable_checkpoint,
 )
+from app.services.project_clone_service import clone_project
 from app.logger import get_logger
 from app.utils.data_consistency import (
     run_full_data_consistency_check,
@@ -148,6 +150,36 @@ async def register_latest_state_checkpoint(
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post(
+    "/{project_id}/clone",
+    response_model=ProjectCloneResponse,
+    summary="创建独立书籍副本",
+)
+async def create_project_clone(
+    project_id: str,
+    payload: ProjectCloneRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    await verify_project_access(project_id, user_id, db)
+    try:
+        return await clone_project(
+            db,
+            source_project_id=project_id,
+            user_id=user_id,
+            request=payload,
+            memory_service=memory_service,
+        )
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        await db.rollback()
+        logger.error("项目克隆失败: project_id=%s error=%s", project_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("", response_model=ProjectResponse, summary="创建项目")
