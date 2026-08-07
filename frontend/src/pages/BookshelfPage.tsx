@@ -1,5 +1,5 @@
 import { Card, Button, Spin, Space, Tag, Typography, Alert, theme } from 'antd';
-import { BookOutlined, RocketOutlined, BulbOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined } from '@ant-design/icons';
+import { BookOutlined, RocketOutlined, BulbOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined, CopyOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
@@ -22,6 +22,7 @@ interface BookshelfPageProps {
   onOpenInspiration: () => void;
   onEnterProject: (project: Project) => void;
   onDeleteProject: (projectId: string) => void;
+  onCloneProject: (project: Project) => void;
   onGenerateCover: (project: Project, overwrite?: boolean) => void | Promise<void>;
   onDownloadCover: (project: Project) => void;
   formatWordCount: (count: number) => string;
@@ -46,6 +47,7 @@ export default function BookshelfPage({
   onOpenInspiration,
   onEnterProject,
   onDeleteProject,
+  onCloneProject,
   onGenerateCover,
   onDownloadCover,
   formatWordCount,
@@ -915,20 +917,37 @@ export default function BookshelfPage({
                               </div>
 
                               <div style={{ justifySelf: 'end' }}>
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  danger
-                                  icon={<DeleteOutlined style={{ fontSize: isMobile ? 12 : 14 }} />}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDeleteProject(project.id);
-                                  }}
-                                  style={{
-                                    padding: isMobile ? '2px 4px' : '4px 8px',
-                                    borderRadius: 8,
-                                  }}
-                                />
+                                <Space size={2}>
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<CopyOutlined style={{ fontSize: isMobile ? 12 : 14 }} />}
+                                    title="创建独立副本"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onCloneProject(project);
+                                    }}
+                                    style={{
+                                      padding: isMobile ? '2px 4px' : '4px 8px',
+                                      borderRadius: 8,
+                                    }}
+                                  />
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    danger
+                                    icon={<DeleteOutlined style={{ fontSize: isMobile ? 12 : 14 }} />}
+                                    title="删除项目"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onDeleteProject(project.id);
+                                    }}
+                                    style={{
+                                      padding: isMobile ? '2px 4px' : '4px 8px',
+                                      borderRadius: 8,
+                                    }}
+                                  />
+                                </Space>
                               </div>
                             </div>
                           </>

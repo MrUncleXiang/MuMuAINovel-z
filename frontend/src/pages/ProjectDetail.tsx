@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, Spin, Button, Drawer, theme } from 'antd';
+import { Layout, Menu, Spin, Button, Drawer, Space, message, theme } from 'antd';
 import {
   ArrowLeftOutlined,
   FileTextOutlined,
@@ -22,6 +22,7 @@ import {
   SettingOutlined,
   HistoryOutlined,
   RocketOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -30,6 +31,7 @@ import ThemeSwitch from '../components/ThemeSwitch';
 import { useThemeMode } from '../theme/useThemeMode';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import FloatingTaskPanel from '../components/FloatingTaskPanel';
+import ProjectCloneModal from '../components/ProjectCloneModal';
 
 const { Header, Sider, Content } = Layout;
 
@@ -43,6 +45,7 @@ export default function ProjectDetail() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [mobile, setMobile] = useState(isMobile());
+  const [cloneOpen, setCloneOpen] = useState(false);
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const { mode, resolvedMode, setMode } = useThemeMode();
@@ -389,24 +392,39 @@ export default function ProjectDetail() {
         </h2>
 
         {mobile && (
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/')}
-            style={{
-              fontSize: '14px',
-              color: token.colorWhite,
-              height: '36px',
-              padding: '0 8px',
-              zIndex: 1
-            }}
-          >
-            主页
-          </Button>
+          <Space size={2} style={{ zIndex: 1 }}>
+            <Button
+              type="text"
+              icon={<CopyOutlined />}
+              title="创建独立副本"
+              onClick={() => setCloneOpen(true)}
+              style={{ color: token.colorWhite, width: 36, height: 36 }}
+            />
+            <Button
+              type="text"
+              icon={<ArrowLeftOutlined />}
+              onClick={() => navigate('/')}
+              style={{
+                fontSize: '14px',
+                color: token.colorWhite,
+                height: '36px',
+                padding: '0 8px',
+              }}
+            >
+              主页
+            </Button>
+          </Space>
         )}
 
         {!mobile && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 1 }}>
+            <Button
+              type="text"
+              icon={<CopyOutlined />}
+              title="创建独立副本"
+              onClick={() => setCloneOpen(true)}
+              style={{ color: token.colorWhite, width: 40, height: 40 }}
+            />
             <div style={{ display: 'flex', gap: '16px' }}>
               {[
                 { label: '大纲', value: outlines.length, unit: '条' },
@@ -690,8 +708,18 @@ export default function ProjectDetail() {
               <Outlet />
             </div>
           </Content>
-        </Layout>
       </Layout>
+      <ProjectCloneModal
+        open={cloneOpen}
+        sourceProject={currentProject}
+        onCancel={() => setCloneOpen(false)}
+        onCreated={(result) => {
+          setCloneOpen(false);
+          message.success('独立副本已创建，流水线尚未启动');
+          navigate(`/project/${result.project_id}/pipeline`);
+        }}
+      />
+    </Layout>
 
       {/* 悬浮任务框 */}
       {projectId && <FloatingTaskPanel projectId={projectId} />}

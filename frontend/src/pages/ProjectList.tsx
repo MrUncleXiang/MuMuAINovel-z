@@ -21,6 +21,7 @@ import AIProviderManagement from './AIProviderManagement';
 import BookshelfPage from './BookshelfPage';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import AnnouncementTimelineModal from '../components/AnnouncementTimelineModal';
+import ProjectCloneModal from '../components/ProjectCloneModal';
 import { useAnnouncements } from '../hooks/useAnnouncements';
 
 const { Text } = Typography;
@@ -72,6 +73,7 @@ export default function ProjectList() {
   const [importing, setImporting] = useState(false);
   const [validating, setValidating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [cloneSource, setCloneSource] = useState<Project | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [exportOptions, setExportOptions] = useState({
     includeWritingStyles: true,
@@ -901,6 +903,7 @@ export default function ProjectList() {
               onOpenInspiration={() => navigate('/inspiration')}
               onEnterProject={handleEnterProject}
               onDeleteProject={handleDelete}
+              onCloneProject={setCloneSource}
               onGenerateCover={handleGenerateCover}
               onDownloadCover={handleDownloadCover}
               formatWordCount={formatWordCount}
@@ -923,6 +926,18 @@ export default function ProjectList() {
         onClose={() => setAnnouncementVisible(false)}
         onRefresh={() => void refreshAnnouncements({ full: true })}
         onMarkAllRead={markAllAnnouncementsRead}
+      />
+
+      <ProjectCloneModal
+        open={Boolean(cloneSource)}
+        sourceProject={cloneSource}
+        onCancel={() => setCloneSource(null)}
+        onCreated={async (result) => {
+          setCloneSource(null);
+          await refreshProjects();
+          message.success('独立副本已创建，流水线尚未启动');
+          navigate(`/project/${result.project_id}/pipeline`);
+        }}
       />
 
       {/* 导入项目对话框 */}
