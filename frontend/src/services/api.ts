@@ -76,6 +76,9 @@ import type {
   ThemeTemplate,
   AIUsageRoute,
   AICallLog,
+  ProjectCreationConfigData,
+  ProjectCreationConfigResponse,
+  SkillSummary,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -409,7 +412,7 @@ export const pipelineApi = {
     api.get<unknown, PipelineCheckpoint[]>(`/pipelines/${id}/checkpoints`),
   checkpointContinue: (id: string, checkpointId: string) =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/continue`),
-  updateConfig: (id: string, config: Record<string, any>) =>
+  updateConfig: (id: string, config: Record<string, unknown>) =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/config`, config),
   checkpointRollback: (id: string, checkpointId: string, mode = 'content') =>
     api.post<unknown, NovelPipeline>(`/pipelines/${id}/checkpoints/${checkpointId}/rollback?mode=${mode}`),
@@ -438,6 +441,12 @@ export const projectApi = {
     api.put<unknown, Project>(`/projects/${id}`, data),
 
   deleteProject: (id: string) => api.delete(`/projects/${id}`),
+
+  getCreationConfig: (id: string) =>
+    api.get<unknown, ProjectCreationConfigResponse>(`/projects/${id}/creation-config`),
+
+  saveCreationConfig: (id: string, config: ProjectCreationConfigData) =>
+    api.put<unknown, ProjectCreationConfigResponse>(`/projects/${id}/creation-config`, config),
 
   generateCover: (id: string, overwrite: boolean = true) =>
     api.post<unknown, {
@@ -550,6 +559,10 @@ export const projectApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+};
+
+export const skillApi = {
+  list: () => api.get<unknown, SkillSummary[]>('/skills/list'),
 };
 
 export const bookImportApi = {

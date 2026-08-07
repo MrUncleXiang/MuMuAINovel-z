@@ -128,6 +128,8 @@ def build_pipeline_runtime_config(
 
     if "checkpoint_every_n_chapters" in pipeline_preferences:
         cfg["checkpoint_every_n"] = pipeline_preferences["checkpoint_every_n_chapters"]
+    if "milestone_chapters" in pipeline_preferences:
+        cfg["milestone_chapters"] = pipeline_preferences["milestone_chapters"]
     if "checkpoint_on_volume_end" in pipeline_preferences:
         cfg["checkpoint_on_volume_end"] = pipeline_preferences["checkpoint_on_volume_end"]
     budget_limit = pipeline_preferences.get("budget_limit")
@@ -516,7 +518,13 @@ async def _run_pipeline_loop(
                     continue
 
                 if pipeline.current_stage == PipelineStage.CHAPTER_LOOP:
-                    chapter = await _next_pending_chapter(db, pipeline)
+                    try:
+                        chapter = await _next_pending_chapter(db, pipeline)
+                    except PipelineStateError as exc:
+                        pipeline.status = PipelineStatus.PAUSED
+                        pipeline.last_error = str(exc)
+                        await db.commit()
+                        return
                     if chapter is None:
                         # 当前卷写完了
                         if pipeline.config_snapshot.get("checkpoint_on_volume_end", True):
@@ -636,11 +644,20 @@ async def _next_pending_chapter(db: AsyncSession, pipeline: NovelPipeline) -> Op
     chapters = list((await db.scalars(stmt)).all())
 
     from app.api.chapters import check_prerequisites
+    from app.services.chapter_lifecycle_service import check_previous_analysis_ready
 
+    blocked_reason = None
     for ch in chapters:
         can, msg, _ = await check_prerequisites(db, ch)
-        if can:
+        if not can:
+            blocked_reason = msg
+            continue
+        analysis_ready, analysis_msg = await check_previous_analysis_ready(db, ch)
+        if analysis_ready:
             return ch
+        blocked_reason = analysis_msg
+    if chapters and blocked_reason:
+        raise PipelineStateError(f"章节推进条件未满足：{blocked_reason}")
     return None
 
 

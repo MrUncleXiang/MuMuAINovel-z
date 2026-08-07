@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert, Button, Card, Col, Collapse, Descriptions, Divider, Empty, Form, InputNumber, Modal, Row,
@@ -8,8 +9,13 @@ import {
   CaretRightOutlined, CheckOutlined, FundOutlined, PauseOutlined, PlayCircleOutlined,
   ReloadOutlined, SettingOutlined, StopOutlined,
 } from '@ant-design/icons';
-import { aiProviderApi, pipelineApi } from '../services/api';
-import type { AIProviderConfig, NovelPipeline, PipelineCheckpoint } from '../types';
+import {
+  aiProviderApi, mcpPluginApi, pipelineApi, projectApi, skillApi, writingStyleApi,
+} from '../services/api';
+import type {
+  AIProviderConfig, MCPPlugin, NovelPipeline, PipelineCheckpoint,
+  ProjectCreationConfigData, ProjectCreationConfigResponse, SkillSummary, WritingStyle,
+} from '../types';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -34,6 +40,13 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
 
 const POLL_INTERVAL = 5000;
 
+const apiErrorMessage = (error: unknown, fallback: string) => {
+  if (axios.isAxiosError<{ detail?: string }>(error)) {
+    return error.response?.data?.detail || fallback;
+  }
+  return fallback;
+};
+
 export default function PipelinePanel() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -44,57 +57,105 @@ export default function PipelinePanel() {
   const [configOpen, setConfigOpen] = useState(false);
   const [configForm] = Form.useForm();
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
+  const [styles, setStyles] = useState<WritingStyle[]>([]);
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [plugins, setPlugins] = useState<MCPPlugin[]>([]);
+  const [creationConfig, setCreationConfig] = useState<ProjectCreationConfigResponse | null>(null);
+  const chapterProviderId = Form.useWatch('chapter_provider', configForm);
+  const analysisProviderId = Form.useWatch('analysis_provider', configForm);
+  const mcpEnabled = Form.useWatch('mcp_enabled', configForm);
 
   useEffect(() => {
-    aiProviderApi.list().then(setProviders).catch(() => undefined);
-  }, []);
+    if (!projectId) return;
+    Promise.all([
+      aiProviderApi.list(),
+      writingStyleApi.getProjectStyles(projectId),
+      skillApi.list(),
+      mcpPluginApi.getPlugins(),
+    ]).then(([providerRows, styleResponse, skillRows, pluginRows]) => {
+      setProviders(providerRows);
+      setStyles(styleResponse.styles);
+      setSkills(skillRows);
+      setPlugins(pluginRows);
+    }).catch(() => message.error('加载创作配置选项失败'));
+  }, [projectId]);
 
-  const openConfig = () => {
-    if (!pipeline) return;
-    const c = pipeline.config_snapshot ?? {};
-    configForm.setFieldsValue({
-      milestone_chapters: c.milestone_chapters ?? 30,
-      checkpoint_every_n: c.checkpoint_every_n ?? 10,
-      checkpoint_on_volume_end: c.checkpoint_on_volume_end ?? true,
-      budget_cents: Math.round((c.budget?.max_amount_cents ?? 3000) / 100),
-      chapter_provider: c.models?.chapter?.provider_config_id ?? '',
-      chapter_model: c.models?.chapter?.model ?? '',
-      chapter_target_words: c.params?.chapter?.target_word_count ?? 3000,
-      chapter_temperature: c.params?.chapter?.temperature ?? 0.8,
-      analysis_provider: c.models?.analysis?.provider_config_id ?? '',
-      analysis_model: c.models?.analysis?.model ?? '',
-    });
-    setConfigOpen(true);
+  const openConfig = async () => {
+    if (!projectId) return;
+    if (pipeline?.status === 'running') {
+      message.warning('请先暂停流水线，再修改创作配置');
+      return;
+    }
+    setActionLoading('config-load');
+    try {
+      const response = await projectApi.getCreationConfig(projectId);
+      const c = response.config;
+      setCreationConfig(response);
+      configForm.setFieldsValue({
+        chapter_provider: c.chapter.provider_config_id ?? undefined,
+        chapter_model: c.chapter.model ?? undefined,
+        analysis_provider: c.analysis.provider_config_id ?? undefined,
+        analysis_model: c.analysis.model ?? undefined,
+        skill_key: c.skill_key ?? undefined,
+        writing_style_id: c.writing_style_id ?? undefined,
+        mcp_enabled: c.mcp.enabled,
+        mcp_plugin_ids: c.mcp.plugin_ids,
+        narrative_perspective: c.narrative_perspective ?? undefined,
+        target_word_count: c.target_word_count,
+        temperature: c.temperature,
+        max_tokens: c.max_tokens ?? undefined,
+        budget_limit: c.pipeline.budget_limit ?? undefined,
+        checkpoint_every_n_chapters: c.pipeline.checkpoint_every_n_chapters,
+        milestone_chapters: c.pipeline.milestone_chapters,
+        checkpoint_on_volume_end: c.pipeline.checkpoint_on_volume_end,
+      });
+      setConfigOpen(true);
+    } catch (error: unknown) {
+      message.error(apiErrorMessage(error, '加载创作配置失败'));
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const saveConfig = async () => {
-    if (!pipeline) return;
+    if (!projectId) return;
     const v = await configForm.validateFields();
-    const payload = {
-      milestone_chapters: v.milestone_chapters,
-      checkpoint_every_n: v.checkpoint_every_n,
-      checkpoint_on_volume_end: v.checkpoint_on_volume_end,
-      budget: { max_amount_cents: Math.round((v.budget_cents ?? 30) * 100), max_tokens: 0 },
-      models: {
-        chapter: { provider_config_id: v.chapter_provider || null, model: v.chapter_model || null },
-        analysis: { provider_config_id: v.analysis_provider || null, model: v.analysis_model || null },
+    const payload: ProjectCreationConfigData = {
+      chapter: { provider_config_id: v.chapter_provider || null, model: v.chapter_model || null },
+      analysis: { provider_config_id: v.analysis_provider || null, model: v.analysis_model || null },
+      skill_key: v.skill_key || null,
+      writing_style_id: v.writing_style_id ?? null,
+      mcp: {
+        enabled: Boolean(v.mcp_enabled),
+        plugin_ids: v.mcp_enabled ? (v.mcp_plugin_ids ?? []) : [],
       },
-      params: {
-        chapter: {
-          target_word_count: v.chapter_target_words,
-          temperature: v.chapter_temperature,
-          max_tokens: Math.max(2000, (v.chapter_target_words ?? 3000) * 3),
-        },
+      narrative_perspective: v.narrative_perspective || null,
+      target_word_count: v.target_word_count,
+      temperature: v.temperature,
+      max_tokens: v.max_tokens ?? null,
+      pipeline: {
+        budget_limit: v.budget_limit ?? null,
+        checkpoint_every_n_chapters: v.checkpoint_every_n_chapters,
+        milestone_chapters: v.milestone_chapters,
+        checkpoint_on_volume_end: Boolean(v.checkpoint_on_volume_end),
+        auto_advance: false,
       },
     };
     setActionLoading('config');
     try {
-      await pipelineApi.updateConfig(pipeline.id, payload);
-      message.success('配置已保存');
+      const response = await projectApi.saveCreationConfig(projectId, payload);
+      setCreationConfig(response);
+      const appliedToPipeline = Boolean(
+        pipeline && ['paused', 'awaiting_review'].includes(pipeline.status),
+      );
+      if (pipeline && appliedToPipeline) {
+        await pipelineApi.updateConfig(pipeline.id, {});
+      }
+      message.success(appliedToPipeline ? '配置已保存并应用到流水线' : '创作配置已保存');
       setConfigOpen(false);
       await refresh();
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '保存失败');
+    } catch (error: unknown) {
+      message.error(apiErrorMessage(error, '保存失败'));
     } finally {
       setActionLoading(null);
     }
@@ -146,8 +207,8 @@ export default function PipelinePanel() {
       await fn();
       message.success('操作成功');
       await refresh();
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '操作失败');
+    } catch (error: unknown) {
+      message.error(apiErrorMessage(error, '操作失败'));
     } finally {
       setActionLoading(null);
     }
@@ -157,7 +218,7 @@ export default function PipelinePanel() {
     if (!projectId) return;
     Modal.confirm({
       title: '启动流水线',
-      content: '将自动开始：建书 → 章节循环 → 检查点。默认每 10 章停一次、里程碑 30 章。',
+      content: '将按这本书已保存的模型、Skill、写作风格和 MCP 配置开始推进。',
       onOk: () => runAction('start', () => pipelineApi.start({ project_id: projectId })),
     });
   };
@@ -171,8 +232,8 @@ export default function PipelinePanel() {
       message.success('已回滚，正在重新生成');
       setRollbackTarget(null);
       await refresh();
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '回滚失败');
+    } catch (error: unknown) {
+      message.error(apiErrorMessage(error, '回滚失败'));
     } finally {
       setActionLoading(null);
     }
@@ -196,9 +257,12 @@ export default function PipelinePanel() {
       {!pipeline ? (
         <Card>
           <Empty description="这本书还没有启动流水线">
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStart} loading={actionLoading === 'start'}>
-              启动流水线
-            </Button>
+            <Space>
+              <Button icon={<SettingOutlined />} onClick={openConfig} loading={actionLoading === 'config-load'}>创作配置</Button>
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStart} loading={actionLoading === 'start'}>
+                启动流水线
+              </Button>
+            </Space>
           </Empty>
         </Card>
       ) : (
@@ -215,7 +279,11 @@ export default function PipelinePanel() {
               <Button type="primary" icon={<CaretRightOutlined />} onClick={() => runAction('resume', () => pipelineApi.resume(pipeline.id))} loading={actionLoading === 'resume'}>继续</Button>
             ) : null}
             <Button danger icon={<StopOutlined />} onClick={() => runAction('stop', () => pipelineApi.stop(pipeline.id))} loading={actionLoading === 'stop'}>停止</Button>
-            <Button icon={<SettingOutlined />} onClick={openConfig} loading={actionLoading === 'config'}>配置</Button>
+            <Button
+              icon={<SettingOutlined />}
+              onClick={openConfig}
+              loading={actionLoading === 'config-load' || actionLoading === 'config'}
+            >创作配置</Button>
           </Space>
 
           {/* 三层状态展示：阶段流程线 */}
@@ -316,46 +384,30 @@ export default function PipelinePanel() {
         </Text>
       </Modal>
 
-      {/* 配置弹窗：里程碑与每N章分开罗列、放在一起 */}
       <Modal
         open={configOpen}
-        title="流水线配置"
+        title="本书创作配置"
         onOk={saveConfig}
         onCancel={() => setConfigOpen(false)}
         okText="保存配置"
         confirmLoading={actionLoading === 'config'}
-        width={560}
+        width={640}
       >
+        {creationConfig?.validation_errors.length ? (
+          <Alert
+            type="error"
+            showIcon
+            message="当前配置包含已失效资源"
+            description={creationConfig.validation_errors.join('；')}
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
         <Form form={configForm} layout="vertical">
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="milestone_chapters" label="里程碑（写完 N 章暂停提醒）">
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="checkpoint_every_n" label="每 N 章停一次审阅">
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="checkpoint_on_volume_end" label="每卷结束必停" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="budget_cents" label="预算上限（元）">
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
           <Collapse
             ghost
             items={[{
               key: 'models',
-              label: '模型与参数（默认全部使用系统配置）',
+              label: '模型与正文参数',
               children: (
                 <>
                   <Form.Item name="chapter_provider" label="章节写作 - AI 服务">
@@ -363,19 +415,69 @@ export default function PipelinePanel() {
                   </Form.Item>
                   <Form.Item name="chapter_model" label="章节写作 - 模型">
                     <Select allowClear placeholder="使用默认模型"
-                      options={(providers.find(p => p.id === configForm.getFieldValue('chapter_provider'))?.models ?? []).map(m => ({ value: m, label: m }))} />
+                      options={(providers.find(p => p.id === chapterProviderId)?.models ?? []).map(m => ({ value: m, label: m }))} />
                   </Form.Item>
-                  <Row gutter={16}>
-                    <Col span={8}><Form.Item name="chapter_target_words" label="每章字数"><InputNumber min={200} style={{ width: '100%' }} /></Form.Item></Col>
-                    <Col span={8}><Form.Item name="chapter_temperature" label="温度"><InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
-                  </Row>
                   <Form.Item name="analysis_provider" label="章节分析 - AI 服务">
                     <Select allowClear placeholder="使用默认路由" options={providers.map(p => ({ value: p.id, label: p.name }))} />
                   </Form.Item>
                   <Form.Item name="analysis_model" label="章节分析 - 模型">
                     <Select allowClear placeholder="使用默认模型"
-                      options={(providers.find(p => p.id === configForm.getFieldValue('analysis_provider'))?.models ?? []).map(m => ({ value: m, label: m }))} />
+                      options={(providers.find(p => p.id === analysisProviderId)?.models ?? []).map(m => ({ value: m, label: m }))} />
                   </Form.Item>
+                  <Row gutter={16}>
+                    <Col span={8}><Form.Item name="target_word_count" label="每章字数" rules={[{ required: true }]}><InputNumber min={500} max={10000} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="temperature" label="温度" rules={[{ required: true }]}><InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="max_tokens" label="最大 Tokens"><InputNumber min={256} max={100000} style={{ width: '100%' }} /></Form.Item></Col>
+                  </Row>
+                </>
+              ),
+            }, {
+              key: 'resources',
+              label: '创作能力',
+              children: (
+                <>
+                  <Form.Item name="skill_key" label="创作 Skill">
+                    <Select allowClear placeholder="不使用 Skill" options={skills.map(skill => ({
+                      value: skill.template_key,
+                      label: `${skill.template_name} · ${skill.category}`,
+                    }))} />
+                  </Form.Item>
+                  <Form.Item name="writing_style_id" label="写作风格">
+                    <Select allowClear placeholder="不指定风格" options={styles.map(style => ({ value: style.id, label: style.name }))} />
+                  </Form.Item>
+                  <Form.Item name="narrative_perspective" label="叙事视角">
+                    <Select allowClear options={['第一人称', '第三人称', '多视角'].map(value => ({ value, label: value }))} />
+                  </Form.Item>
+                  <Form.Item name="mcp_enabled" label="启用 MCP 工具" valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="mcp_plugin_ids" label="允许使用的 MCP 插件">
+                    <Select
+                      mode="multiple"
+                      disabled={!mcpEnabled}
+                      placeholder="选择本书可使用的插件"
+                      options={plugins.map(plugin => ({
+                        value: plugin.id,
+                        label: plugin.display_name,
+                        disabled: !plugin.enabled,
+                      }))}
+                    />
+                  </Form.Item>
+                </>
+              ),
+            }, {
+              key: 'pipeline',
+              label: '推进与检查点',
+              children: (
+                <>
+                  <Row gutter={16}>
+                    <Col span={12}><Form.Item name="checkpoint_every_n_chapters" label="每 N 章停一次审阅" rules={[{ required: true }]}><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col span={12}><Form.Item name="milestone_chapters" label="里程碑章节数" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                  </Row>
+                  <Row gutter={16}>
+                    <Col span={12}><Form.Item name="checkpoint_on_volume_end" label="每卷结束必停" valuePropName="checked"><Switch /></Form.Item></Col>
+                    <Col span={12}><Form.Item name="budget_limit" label="预算上限（元）"><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item></Col>
+                  </Row>
                 </>
               ),
             }]}

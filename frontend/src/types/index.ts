@@ -1396,9 +1396,9 @@ export interface NovelPipeline {
   current_outline_id?: string;
   chapter_count: number;
   current_checkpoint_id?: string;
-  config_snapshot: Record<string, any>;
-  progress_json: Record<string, any>;
-  checkpoint_history: Array<Record<string, any>>;
+  config_snapshot: PipelineRuntimeConfig;
+  progress_json: Record<string, unknown>;
+  checkpoint_history: Array<Record<string, unknown>>;
   budget_used_tokens: number;
   budget_used_amount_cents: number;
   last_error?: string;
@@ -1409,7 +1409,73 @@ export interface NovelPipeline {
 
 export interface PipelineStartRequest {
   project_id: string;
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
+}
+
+export interface PipelineRuntimeConfig {
+  milestone_chapters?: number;
+  checkpoint_every_n?: number;
+  checkpoint_on_volume_end?: boolean;
+  budget?: { max_amount_cents?: number; max_tokens?: number };
+  models?: {
+    chapter?: ModelSelection;
+    analysis?: ModelSelection;
+  };
+  params?: {
+    chapter?: {
+      target_word_count?: number;
+      temperature?: number;
+      max_tokens?: number | null;
+    };
+  };
+  skill_key?: string | null;
+  style_id?: number | null;
+  enable_mcp?: boolean;
+  mcp_plugin_ids?: string[];
+  config_version?: number;
+}
+
+export interface ModelSelection {
+  provider_config_id?: string | null;
+  model?: string | null;
+}
+
+export interface ProjectCreationConfigData {
+  chapter: ModelSelection;
+  analysis: ModelSelection;
+  skill_key?: string | null;
+  writing_style_id?: number | null;
+  mcp: {
+    enabled: boolean;
+    plugin_ids: string[];
+  };
+  narrative_perspective?: string | null;
+  target_word_count: number;
+  temperature: number;
+  max_tokens?: number | null;
+  pipeline: {
+    budget_limit?: number | null;
+    checkpoint_every_n_chapters: number;
+    milestone_chapters: number;
+    checkpoint_on_volume_end: boolean;
+    auto_advance: boolean;
+  };
+}
+
+export interface ProjectCreationConfigResponse {
+  project_id: string;
+  config_version: number;
+  config: ProjectCreationConfigData;
+  persisted: boolean;
+  validation_errors: string[];
+  updated_at?: string | null;
+}
+
+export interface SkillSummary {
+  template_key: string;
+  template_name: string;
+  category: string;
+  description: string;
 }
 
 // ============ 题材模板库 ============
@@ -1420,7 +1486,7 @@ export interface ThemeTemplate {
   tags: string[];
   description?: string;
   world_formula?: string;
-  character_prototypes: Array<Record<string, any>>;
+  character_prototypes: Array<Record<string, unknown>>;
   volume_structure?: string;
   source: string;
   source_refs: string[];

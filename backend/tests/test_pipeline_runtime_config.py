@@ -6,7 +6,25 @@ import app.database  # noqa: F401 - initialize model registry
 
 from app.services.pipeline_service import build_pipeline_runtime_config
 from app.services.pipeline_service import _generate_one_chapter
+from app.services.pipeline_service import _next_pending_chapter
 from app.services.pipeline_service import merge_config
+from app.services.pipeline_service import PipelineStateError
+
+
+class FakeScalars:
+    def __init__(self, values):
+        self.values = values
+
+    def all(self):
+        return self.values
+
+
+class FakeChapterSession:
+    def __init__(self, chapters):
+        self.chapters = chapters
+
+    async def scalars(self, _statement):
+        return FakeScalars(self.chapters)
 
 
 class PipelineRuntimeConfigTests(unittest.TestCase):
@@ -38,6 +56,7 @@ class PipelineRuntimeConfigTests(unittest.TestCase):
                 "pipeline": {
                     "budget_limit": 12.5,
                     "checkpoint_every_n_chapters": 4,
+                    "milestone_chapters": 24,
                     "checkpoint_on_volume_end": False,
                     "auto_advance": False,
                 },
@@ -66,12 +85,27 @@ class PipelineRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config["params"]["chapter"]["temperature"], 0.65)
         self.assertEqual(config["params"]["chapter"]["max_tokens"], 9000)
         self.assertEqual(config["checkpoint_every_n"], 4)
+        self.assertEqual(config["milestone_chapters"], 24)
         self.assertFalse(config["checkpoint_on_volume_end"])
         self.assertEqual(config["budget"]["max_amount_cents"], 1250)
         self.assertEqual(config["creation_runtime_snapshot"], runtime_snapshot)
 
 
 class PipelineChapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_chapter_waits_for_previous_analysis(self):
+        chapter = SimpleNamespace(id="chapter-2")
+        pipeline = SimpleNamespace(project_id="project-1", current_outline_id="outline-1")
+
+        with (
+            patch("app.api.chapters.check_prerequisites", AsyncMock(return_value=(True, "", []))),
+            patch(
+                "app.services.chapter_lifecycle_service.check_previous_analysis_ready",
+                AsyncMock(return_value=(False, "第1章分析尚未完成")),
+            ),
+        ):
+            with self.assertRaisesRegex(PipelineStateError, "分析尚未完成"):
+                await _next_pending_chapter(FakeChapterSession([chapter]), pipeline)
+
     async def test_generation_uses_snapshot_and_waits_for_selected_analysis_model(self):
         pipeline = SimpleNamespace(
             id="pipeline-12345678",

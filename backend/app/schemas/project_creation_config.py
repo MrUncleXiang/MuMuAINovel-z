@@ -22,6 +22,7 @@ class MCPSelection(StrictConfigModel):
 class PipelinePreferences(StrictConfigModel):
     budget_limit: Optional[float] = Field(default=None, ge=0)
     checkpoint_every_n_chapters: int = Field(default=1, ge=1, le=100)
+    milestone_chapters: int = Field(default=30, ge=0, le=100000)
     checkpoint_on_volume_end: bool = True
     auto_advance: bool = False
 
