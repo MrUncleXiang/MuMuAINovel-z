@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 import uuid
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.career import Career, CharacterCareer
@@ -215,7 +215,7 @@ async def restore_project_state(
             ))
         else:
             statement = delete(model).where(model.project_id == project_id)
-        await db.execute(statement)
+        await db.execute(statement.execution_options(synchronize_session=False))
 
     field_models = dict(SNAPSHOT_MODELS)
     restore_order = (
@@ -228,21 +228,26 @@ async def restore_project_state(
         "foreshadows",
         "story_memories",
     )
-    pending_parent_links: list[tuple[Organization, str]] = []
+    pending_parent_links: list[tuple[str, str]] = []
     for field_name in restore_order:
         model = field_models[field_name]
+        records = []
         for entity in getattr(snapshot, field_name):
-            data = dict(entity.data)
+            data = {"id": entity.id, **entity.data}
             if model is Organization and data.get("parent_org_id"):
                 parent_id = data.pop("parent_org_id")
-                instance = model(id=entity.id, **data, parent_org_id=None)
-                pending_parent_links.append((instance, parent_id))
-            else:
-                instance = model(id=entity.id, **data)
-            db.add(instance)
-        await db.flush()
-    for organization, parent_id in pending_parent_links:
-        organization.parent_org_id = parent_id
+                data["parent_org_id"] = None
+                pending_parent_links.append((entity.id, parent_id))
+            records.append(data)
+        if records:
+            await db.execute(insert(model), records)
+    for organization_id, parent_id in pending_parent_links:
+        await db.execute(
+            update(Organization)
+            .where(Organization.id == organization_id)
+            .values(parent_org_id=parent_id)
+            .execution_options(synchronize_session=False)
+        )
     await db.flush()
 
 

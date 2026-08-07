@@ -5,10 +5,17 @@ from unittest.mock import AsyncMock, patch
 
 import app.database  # noqa: F401 - initialize model registry
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.database import Base
+from app.models.career import Career, CharacterCareer
+from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.foreshadow import Foreshadow
 from app.models.memory import StoryMemory
+from app.models.project import Project
+from app.models.relationship import CharacterRelationship
 from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1
 from app.services.project_state_checkpoint_service import serialize_snapshot_entity
 from app.services.project_state_checkpoint_service import create_project_state_checkpoint
@@ -16,6 +23,8 @@ from app.services.project_state_checkpoint_service import invalidate_checkpoints
 from app.services.project_state_checkpoint_service import prepare_project_state_for_chapter_rewrite
 from app.services.project_state_checkpoint_service import list_valid_project_checkpoints
 from app.services.project_state_checkpoint_service import register_latest_reliable_checkpoint
+from app.services.project_state_checkpoint_service import capture_project_state
+from app.services.project_state_checkpoint_service import restore_project_state
 from app.services.chapter_lifecycle_service import chapter_content_hash
 
 
@@ -327,6 +336,116 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
             await register_latest_reliable_checkpoint(db, project_id="project-1")
 
         self.assertEqual(db.added, [])
+
+
+class ProjectStateCheckpointDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restored_database_state_equals_captured_boundary(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with sessions() as db:
+            db.add(Project(id="project-1", user_id="user-1", title="测试书"))
+            db.add(Chapter(
+                id="chapter-1",
+                project_id="project-1",
+                chapter_number=1,
+                title="第一章",
+                content="正文",
+                status="completed",
+            ))
+            db.add(Career(
+                id="career-1",
+                project_id="project-1",
+                name="剑修",
+                type="main",
+                stages="[]",
+                max_stage=10,
+            ))
+            db.add_all([
+                Character(
+                    id="character-1",
+                    project_id="project-1",
+                    name="林川",
+                    current_state="平静",
+                    main_career_id="career-1",
+                    main_career_stage=2,
+                ),
+                Character(id="character-2", project_id="project-1", name="苏禾"),
+            ])
+            db.add(CharacterCareer(
+                id="character-career-1",
+                character_id="character-1",
+                career_id="career-1",
+                career_type="main",
+                current_stage=2,
+            ))
+            db.add(CharacterRelationship(
+                id="relationship-1",
+                project_id="project-1",
+                character_from_id="character-1",
+                character_to_id="character-2",
+                relationship_name="盟友",
+                intimacy_level=60,
+            ))
+            db.add(Foreshadow(
+                id="foreshadow-1",
+                project_id="project-1",
+                title="旧钥匙",
+                content="未解之谜",
+                status="planted",
+                plant_chapter_id="chapter-1",
+                plant_chapter_number=1,
+            ))
+            db.add(StoryMemory(
+                id="memory-1",
+                project_id="project-1",
+                chapter_id="chapter-1",
+                memory_type="plot_point",
+                content="发现钥匙",
+                story_timeline=1,
+            ))
+            await db.commit()
+            captured = await capture_project_state(
+                db,
+                project_id="project-1",
+                chapter_number=1,
+            )
+
+        async with sessions() as db:
+            character = await db.get(Character, "character-1")
+            relationship = await db.get(CharacterRelationship, "relationship-1")
+            foreshadow = await db.get(Foreshadow, "foreshadow-1")
+            character.current_state = "绝望"
+            character.main_career_stage = 8
+            relationship.intimacy_level = -20
+            foreshadow.status = "resolved"
+            foreshadow.actual_resolve_chapter_number = 9
+            db.add(Character(id="future-character", project_id="project-1", name="未来角色"))
+            await db.commit()
+
+        async with sessions() as db:
+            await restore_project_state(
+                db,
+                project_id="project-1",
+                snapshot=captured,
+            )
+            await db.commit()
+
+        async with sessions() as db:
+            restored = await capture_project_state(
+                db,
+                project_id="project-1",
+                chapter_number=1,
+            )
+            future = await db.scalar(select(Character.id).where(
+                Character.id == "future-character"
+            ))
+
+        await engine.dispose()
+        self.assertEqual(restored, captured)
+        self.assertIsNone(future)
 
 
 if __name__ == "__main__":
