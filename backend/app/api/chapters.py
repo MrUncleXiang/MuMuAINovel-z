@@ -3924,6 +3924,11 @@ async def batch_compare_chapters(
     if not target:
         raise HTTPException(status_code=404, detail="指定范围内没有章节")
 
+    # 起始章节的前一章必须已完成分析（否则上下文滞后，候选质量受影响）
+    analysis_ready, analysis_msg = await check_previous_analysis_ready(db, target[0])
+    if not analysis_ready:
+        raise HTTPException(status_code=409, detail=f"批量对比需先保证上下文连贯：{analysis_msg}")
+
     # 登记批量对比任务（复用批量任务表，task_type=batch_compare，前端悬浮任务框可查看进度）
     compare_task = BatchGenerationTask(
         project_id=project_id, user_id=user_id, task_type="batch_compare",
