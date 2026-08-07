@@ -99,7 +99,7 @@ from app.services.chapter_analysis_context_service import (
 from app.services.formal_chapter_service import (
     FormalChapterConflictError,
     build_lightweight_chapter_summary as _build_lightweight_chapter_summary,
-    ensure_chapter_content_replaceable,
+    prepare_chapter_content_replacement,
     persist_formal_chapter_content,
 )
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -408,18 +408,15 @@ async def update_chapter(
     update_data = chapter_update.model_dump(exclude_unset=True)
     if "content" in update_data:
         try:
-            await ensure_chapter_content_replaceable(db, chapter, update_data["content"])
+            await prepare_chapter_content_replacement(
+                db=db,
+                chapter=chapter,
+                new_content=update_data["content"],
+                user_id=user_id,
+                memory_service=memory_service,
+            )
         except FormalChapterConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
-        if chapter_content_hash(chapter.content) != chapter_content_hash(update_data["content"]):
-            from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
-
-            await invalidate_checkpoints_from_chapter(
-                db,
-                project_id=chapter.project_id,
-                chapter_number=chapter.chapter_number,
-                reason=f"第{chapter.chapter_number}章正文被手动修改",
-            )
     for field, value in update_data.items():
         setattr(chapter, field, value)
     
@@ -1505,6 +1502,7 @@ async def generate_chapter_content_stream(
                     prompt=f"创作章节: 第{current_chapter.chapter_number}章 {current_chapter.title}",
                     model=custom_model or generate_request.model or "default",
                     foreshadow_service=foreshadow_service,
+                    memory_service=memory_service,
                     expected_content_hash=expected_content_hash,
                 )
                 db_committed = True
@@ -2101,6 +2099,7 @@ async def _run_chapter_generation_bg(
             prompt=f"创作章节: 第{current_chapter.chapter_number}章 {current_chapter.title}",
             model=custom_model or task_input.get("model") or "default",
             foreshadow_service=foreshadow_service,
+            memory_service=memory_service,
             expected_content_hash=expected_content_hash,
         )
         current_chapter = formal_result.chapter
@@ -3773,6 +3772,7 @@ async def generate_single_chapter_for_batch(
             prompt=f"批量生成: 第{chapter.chapter_number}章 {chapter.title}",
             model=custom_model or "default",
             foreshadow_service=foreshadow_service,
+            memory_service=memory_service,
             expected_content_hash=expected_content_hash,
         )
         chapter = formal_result.chapter
@@ -4574,6 +4574,7 @@ async def apply_partial_regenerate(
             prompt=f"局部重写: 第{chapter.chapter_number}章 {chapter.title}",
             model="partial-regenerate",
             foreshadow_service=foreshadow_service,
+            memory_service=memory_service,
             expected_content_hash=chapter_content_hash(chapter.content),
         )
     except FormalChapterConflictError as exc:

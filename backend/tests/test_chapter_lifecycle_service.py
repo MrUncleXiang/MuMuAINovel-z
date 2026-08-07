@@ -314,6 +314,7 @@ class FormalChapterServiceTests(unittest.IsolatedAsyncioTestCase):
             prompt="prompt",
             model="model-1",
             foreshadow_service=FakeForeshadowService(),
+            memory_service=FakeMemoryService(),
             expected_content_hash=chapter_content_hash(None),
         )
 
@@ -336,20 +337,22 @@ class FormalChapterServiceTests(unittest.IsolatedAsyncioTestCase):
                 prompt="prompt",
                 model="model-1",
                 foreshadow_service=FakeForeshadowService(),
+                memory_service=FakeMemoryService(),
                 expected_content_hash=chapter_content_hash("old"),
             )
 
         self.assertEqual(db.commit_count, 0)
 
-    async def test_rejects_replacing_content_with_materialized_analysis(self):
+    async def test_rejects_replacing_content_without_prior_checkpoint(self):
         chapter = SimpleNamespace(
             id="chapter-1",
             project_id="project-1",
+            chapter_number=1,
             content="analyzed content",
         )
         db = MaterializationSession(chapter, "analysis-task-id")
 
-        with self.assertRaisesRegex(FormalChapterConflictError, "不能直接覆盖"):
+        with self.assertRaisesRegex(FormalChapterConflictError, "缺少写作前状态检查点"):
             await persist_formal_chapter_content(
                 db=db,
                 chapter_id=chapter.id,
@@ -358,6 +361,7 @@ class FormalChapterServiceTests(unittest.IsolatedAsyncioTestCase):
                 prompt="prompt",
                 model="model-1",
                 foreshadow_service=FakeForeshadowService(),
+                memory_service=FakeMemoryService(),
                 expected_content_hash=chapter_content_hash(chapter.content),
             )
 

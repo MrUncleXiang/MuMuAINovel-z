@@ -13,6 +13,7 @@ from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1
 from app.services.project_state_checkpoint_service import serialize_snapshot_entity
 from app.services.project_state_checkpoint_service import create_project_state_checkpoint
 from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
+from app.services.project_state_checkpoint_service import prepare_project_state_for_chapter_rewrite
 
 
 class FakeCheckpointSession:
@@ -32,6 +33,31 @@ class FakeCheckpointSession:
     async def execute(self, statement):
         self.executed = statement
         return SimpleNamespace(rowcount=2)
+
+
+class FakeScalars:
+    def __init__(self, values):
+        self.values = values
+
+    def all(self):
+        return self.values
+
+
+class FakeRestoreSession:
+    def __init__(self, previous, chapters):
+        self.previous = previous
+        self.chapters = chapters
+        self.executed = []
+
+    async def scalar(self, _statement):
+        return self.previous
+
+    async def scalars(self, _statement):
+        return FakeScalars(self.chapters)
+
+    async def execute(self, statement):
+        self.executed.append(statement)
+        return SimpleNamespace(rowcount=1)
 
 
 class ProjectStateSnapshotSchemaTests(unittest.TestCase):
@@ -161,6 +187,44 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
         compiled = str(db.executed.compile(compile_kwargs={"literal_binds": True}))
         self.assertIn("chapter_number >= 8", compiled)
         self.assertIn("status = 'valid'", compiled)
+
+    async def test_rewrite_restores_previous_boundary_and_clears_future_vectors(self):
+        snapshot = ProjectStateSnapshotV1(chapter_number=2)
+        previous = SimpleNamespace(state_json=snapshot.model_dump(mode="json"))
+        affected = [
+            SimpleNamespace(id="chapter-3", chapter_number=3),
+            SimpleNamespace(id="chapter-4", chapter_number=4),
+        ]
+        db = FakeRestoreSession(previous, affected)
+        memory_service = SimpleNamespace(delete_chapter_memories=AsyncMock(return_value=True))
+        chapter = SimpleNamespace(
+            id="chapter-3",
+            project_id="project-1",
+            chapter_number=3,
+        )
+
+        with (
+            patch(
+                "app.services.project_state_checkpoint_service.restore_project_state",
+                AsyncMock(),
+            ) as restore,
+            patch(
+                "app.services.project_state_checkpoint_service.invalidate_checkpoints_from_chapter",
+                AsyncMock(return_value=2),
+            ) as invalidate,
+        ):
+            result = await prepare_project_state_for_chapter_rewrite(
+                db,
+                user_id="user-1",
+                chapter=chapter,
+                memory_service=memory_service,
+            )
+
+        self.assertIs(result, previous)
+        self.assertEqual(memory_service.delete_chapter_memories.await_count, 2)
+        restore.assert_awaited_once()
+        invalidate.assert_awaited_once()
+        self.assertEqual(len(db.executed), 2)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,10 @@ from app.services.chapter_lifecycle_service import (
     chapter_content_hash,
     create_pending_analysis_task,
 )
-from app.services.project_state_checkpoint_service import invalidate_checkpoints_from_chapter
+from app.services.project_state_checkpoint_service import (
+    invalidate_checkpoints_from_chapter,
+    prepare_project_state_for_chapter_rewrite,
+)
 
 
 class FormalChapterConflictError(ValueError):
@@ -55,6 +58,46 @@ async def ensure_chapter_content_replaceable(
         )
 
 
+async def prepare_chapter_content_replacement(
+    *,
+    db: AsyncSession,
+    chapter: Chapter,
+    new_content: str | None,
+    user_id: str,
+    memory_service,
+) -> None:
+    """Restore a proven prior boundary before replacing analyzed content."""
+    if chapter_content_hash(chapter.content) == chapter_content_hash(new_content):
+        return
+    materialized = None
+    if chapter.content:
+        materialized = await db.scalar(
+            select(AnalysisTask.id)
+            .where(
+                AnalysisTask.chapter_id == chapter.id,
+                AnalysisTask.materialized_at.is_not(None),
+            )
+            .limit(1)
+        )
+    if materialized:
+        try:
+            await prepare_project_state_for_chapter_rewrite(
+                db,
+                user_id=user_id,
+                chapter=chapter,
+                memory_service=memory_service,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise FormalChapterConflictError(str(exc)) from exc
+    else:
+        await invalidate_checkpoints_from_chapter(
+            db,
+            project_id=chapter.project_id,
+            chapter_number=chapter.chapter_number,
+            reason=f"第{chapter.chapter_number}章正式正文已更新",
+        )
+
+
 async def persist_formal_chapter_content(
     *,
     db: AsyncSession,
@@ -64,6 +107,7 @@ async def persist_formal_chapter_content(
     prompt: str,
     model: str,
     foreshadow_service,
+    memory_service,
     expected_content_hash: str | None = None,
 ) -> FormalChapterResult:
     """Persist content, history, planned foreshadows and analysis task atomically."""
@@ -75,15 +119,13 @@ async def persist_formal_chapter_content(
     if expected_content_hash and chapter_content_hash(chapter.content) != expected_content_hash:
         raise FormalChapterConflictError("章节正文在生成期间已被修改，请重新生成")
 
-    content_changed = chapter_content_hash(chapter.content) != chapter_content_hash(content)
-    await ensure_chapter_content_replaceable(db, chapter, content)
-    if content_changed:
-        await invalidate_checkpoints_from_chapter(
-            db,
-            project_id=chapter.project_id,
-            chapter_number=chapter.chapter_number,
-            reason=f"第{chapter.chapter_number}章正式正文已更新",
-        )
+    await prepare_chapter_content_replacement(
+        db=db,
+        chapter=chapter,
+        new_content=content,
+        user_id=user_id,
+        memory_service=memory_service,
+    )
 
     project = await db.scalar(
         select(Project).where(Project.id == chapter.project_id).with_for_update()

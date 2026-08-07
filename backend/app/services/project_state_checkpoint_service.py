@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.career import Career, CharacterCareer
@@ -30,6 +30,16 @@ SNAPSHOT_MODELS = (
     ("story_memories", StoryMemory),
 )
 TIMESTAMP_COLUMNS = {"created_at", "updated_at"}
+RESTORE_DELETE_ORDER = (
+    OrganizationMember,
+    CharacterCareer,
+    CharacterRelationship,
+    Organization,
+    Character,
+    Career,
+    Foreshadow,
+    StoryMemory,
+)
 
 
 def _json_value(value: Any) -> Any:
@@ -172,3 +182,120 @@ async def invalidate_checkpoints_from_chapter(
         )
     )
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def restore_project_state(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    snapshot: ProjectStateSnapshotV1,
+) -> None:
+    """Replace mutable project entities with one previously captured state."""
+    for model in RESTORE_DELETE_ORDER:
+        if model is OrganizationMember:
+            statement = delete(model).where(model.organization_id.in_(
+                select(Organization.id).where(Organization.project_id == project_id)
+            ))
+        elif model is CharacterCareer:
+            statement = delete(model).where(model.character_id.in_(
+                select(Character.id).where(Character.project_id == project_id)
+            ))
+        else:
+            statement = delete(model).where(model.project_id == project_id)
+        await db.execute(statement)
+
+    field_models = dict(SNAPSHOT_MODELS)
+    restore_order = (
+        "careers",
+        "characters",
+        "relationships",
+        "organizations",
+        "organization_members",
+        "character_careers",
+        "foreshadows",
+        "story_memories",
+    )
+    pending_parent_links: list[tuple[Organization, str]] = []
+    for field_name in restore_order:
+        model = field_models[field_name]
+        for entity in getattr(snapshot, field_name):
+            data = dict(entity.data)
+            if model is Organization and data.get("parent_org_id"):
+                parent_id = data.pop("parent_org_id")
+                instance = model(id=entity.id, **data, parent_org_id=None)
+                pending_parent_links.append((instance, parent_id))
+            else:
+                instance = model(id=entity.id, **data)
+            db.add(instance)
+        await db.flush()
+    for organization, parent_id in pending_parent_links:
+        organization.parent_org_id = parent_id
+    await db.flush()
+
+
+async def prepare_project_state_for_chapter_rewrite(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    chapter: Chapter,
+    memory_service: Any,
+) -> ProjectStateCheckpoint:
+    """Restore X-1 and supersede derived state from X onward before a rewrite."""
+    if chapter.chapter_number <= 1:
+        raise ValueError("第1章缺少写作前状态检查点，暂不能安全覆盖")
+    previous = await db.scalar(
+        select(ProjectStateCheckpoint)
+        .where(
+            ProjectStateCheckpoint.project_id == chapter.project_id,
+            ProjectStateCheckpoint.chapter_number == chapter.chapter_number - 1,
+            ProjectStateCheckpoint.status == "valid",
+        )
+        .order_by(ProjectStateCheckpoint.created_at.desc())
+        .limit(1)
+    )
+    if previous is None:
+        raise ValueError(
+            f"缺少第{chapter.chapter_number - 1}章有效状态检查点，暂不能安全覆盖"
+        )
+
+    affected_chapters = list((await db.scalars(
+        select(Chapter).where(
+            Chapter.project_id == chapter.project_id,
+            Chapter.chapter_number >= chapter.chapter_number,
+        )
+    )).all())
+    for affected in affected_chapters:
+        deleted = await memory_service.delete_chapter_memories(
+            user_id=user_id,
+            project_id=chapter.project_id,
+            chapter_id=affected.id,
+        )
+        if not deleted:
+            raise RuntimeError(f"第{affected.chapter_number}章向量记忆清理失败")
+
+    snapshot = ProjectStateSnapshotV1.model_validate(previous.state_json)
+    await restore_project_state(db, project_id=chapter.project_id, snapshot=snapshot)
+    affected_ids = [affected.id for affected in affected_chapters]
+    if affected_ids:
+        from app.models.memory import PlotAnalysis
+
+        await db.execute(delete(PlotAnalysis).where(PlotAnalysis.chapter_id.in_(affected_ids)))
+        await db.execute(
+            update(AnalysisTask)
+            .where(
+                AnalysisTask.chapter_id.in_(affected_ids),
+                AnalysisTask.materialized_at.is_not(None),
+            )
+            .values(
+                status="superseded",
+                error_message="前序章节正文已修改，需要按顺序重新分析",
+                materialized_at=None,
+            )
+        )
+    await invalidate_checkpoints_from_chapter(
+        db,
+        project_id=chapter.project_id,
+        chapter_number=chapter.chapter_number,
+        reason=f"第{chapter.chapter_number}章正文准备重建",
+    )
+    return previous
