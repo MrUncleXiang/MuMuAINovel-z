@@ -30,6 +30,30 @@ def build_lightweight_chapter_summary(content: str, max_length: int = 300) -> st
     return normalized[:max_length]
 
 
+async def ensure_chapter_content_replaceable(
+    db: AsyncSession,
+    chapter: Chapter,
+    new_content: str | None,
+) -> None:
+    """Reject replacements whose already-applied derived state cannot be undone yet."""
+    if chapter_content_hash(chapter.content) == chapter_content_hash(new_content):
+        return
+    if not chapter.content:
+        return
+    materialized = await db.scalar(
+        select(AnalysisTask.id)
+        .where(
+            AnalysisTask.chapter_id == chapter.id,
+            AnalysisTask.materialized_at.is_not(None),
+        )
+        .limit(1)
+    )
+    if materialized:
+        raise FormalChapterConflictError(
+            "该章节已有正式分析，当前版本暂不能直接覆盖；请等待历史状态重建功能完成"
+        )
+
+
 async def persist_formal_chapter_content(
     *,
     db: AsyncSession,
@@ -50,20 +74,7 @@ async def persist_formal_chapter_content(
     if expected_content_hash and chapter_content_hash(chapter.content) != expected_content_hash:
         raise FormalChapterConflictError("章节正文在生成期间已被修改，请重新生成")
 
-    new_hash = chapter_content_hash(content)
-    if chapter.content and chapter_content_hash(chapter.content) != new_hash:
-        materialized = await db.scalar(
-            select(AnalysisTask.id)
-            .where(
-                AnalysisTask.chapter_id == chapter.id,
-                AnalysisTask.materialized_at.is_not(None),
-            )
-            .limit(1)
-        )
-        if materialized:
-            raise FormalChapterConflictError(
-                "该章节已有正式分析，当前版本暂不能直接覆盖；请等待历史状态重建功能完成"
-            )
+    await ensure_chapter_content_replaceable(db, chapter, content)
 
     project = await db.scalar(
         select(Project).where(Project.id == chapter.project_id).with_for_update()

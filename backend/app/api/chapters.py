@@ -97,7 +97,9 @@ from app.services.chapter_analysis_context_service import (
     build_characters_info_with_careers,
 )
 from app.services.formal_chapter_service import (
+    FormalChapterConflictError,
     build_lightweight_chapter_summary as _build_lightweight_chapter_summary,
+    ensure_chapter_content_replaceable,
     persist_formal_chapter_content,
 )
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -404,6 +406,11 @@ async def update_chapter(
     
     # 更新字段
     update_data = chapter_update.model_dump(exclude_unset=True)
+    if "content" in update_data:
+        try:
+            await ensure_chapter_content_replaceable(db, chapter, update_data["content"])
+        except FormalChapterConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
     for field, value in update_data.items():
         setattr(chapter, field, value)
     
@@ -4530,22 +4537,28 @@ async def apply_partial_regenerate(
     # 构建新内容
     old_word_count = chapter.word_count or 0
     new_content = chapter.content[:start_position] + new_text + chapter.content[end_position:]
-    new_word_count = len(new_content)
-    
-    # 更新章节
-    chapter.content = new_content
-    chapter.word_count = new_word_count
-    
-    # 更新项目字数
-    project_result = await db.execute(
-        select(Project).where(Project.id == chapter.project_id)
-    )
-    project = project_result.scalar_one_or_none()
-    if project:
-        project.current_words = project.current_words - old_word_count + new_word_count
-    
-    await db.commit()
-    await db.refresh(chapter)
+    try:
+        formal_result = await persist_formal_chapter_content(
+            db=db,
+            chapter_id=chapter.id,
+            user_id=user_id,
+            content=new_content,
+            prompt=f"局部重写: 第{chapter.chapter_number}章 {chapter.title}",
+            model="partial-regenerate",
+            foreshadow_service=foreshadow_service,
+            expected_content_hash=chapter_content_hash(chapter.content),
+        )
+    except FormalChapterConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    chapter = formal_result.chapter
+    new_word_count = chapter.word_count
+
+    _schedule_analysis_background(analyze_chapter_background(
+        chapter_id=chapter.id,
+        user_id=user_id,
+        project_id=chapter.project_id,
+        task_id=formal_result.analysis_task.id,
+    ))
     
     logger.info(f"✅ 局部重写已应用: 章节{chapter_id}, {old_word_count}字 -> {new_word_count}字")
     
@@ -4554,5 +4567,6 @@ async def apply_partial_regenerate(
         "chapter_id": chapter_id,
         "word_count": new_word_count,
         "old_word_count": old_word_count,
+        "analysis_task_id": formal_result.analysis_task.id,
         "message": "局部重写已应用"
     }
