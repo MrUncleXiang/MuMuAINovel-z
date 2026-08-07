@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.schemas.project_creation_config import ProjectCreationConfigData
 from app.services.project_creation_config_service import freeze_project_creation_config
+from app.services.project_creation_config_service import validate_project_creation_config
 
 
 class FakeScalars:
@@ -51,6 +52,24 @@ class ProjectCreationConfigSchemaTests(unittest.TestCase):
 
 
 class ProjectCreationRuntimeSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_provider_is_reported_instead_of_falling_back(self):
+        disabled_provider = SimpleNamespace(
+            id="provider-1",
+            name="Disabled Provider",
+            enabled=False,
+            default_model="model",
+        )
+        config = ProjectCreationConfigData.model_validate({
+            "chapter": {"provider_config_id": "provider-1"},
+        })
+        errors = await validate_project_creation_config(
+            FakeSession([disabled_provider]),
+            user_id="user-1",
+            config=config,
+        )
+
+        self.assertEqual(errors, ["章节模型服务“Disabled Provider”已禁用"])
+
     async def test_freeze_never_exposes_provider_credentials(self):
         config = ProjectCreationConfigData.model_validate({
             "chapter": {"provider_config_id": "provider-1", "model": "chapter-model"},
