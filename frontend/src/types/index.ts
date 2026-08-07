@@ -339,6 +339,53 @@ export interface ProjectUpdate {
   // current_words 由章节内容自动计算，不在此接口中
 }
 
+export type ProjectCloneMode = 'settings_only' | 'inherit_checkpoint';
+
+export interface ProjectStateCheckpoint {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  chapter_number: number;
+  analysis_task_id?: string | null;
+  content_hash: string;
+  schema_version: number;
+  status: 'valid' | 'invalid';
+  invalid_reason?: string | null;
+  config_version?: number | null;
+  created_at: string;
+  invalidated_at?: string | null;
+}
+
+export interface ProjectCloneRequest {
+  title: string;
+  mode: ProjectCloneMode;
+  checkpoint_id?: string;
+}
+
+export interface ProjectCloneCounts {
+  outlines: number;
+  chapters: number;
+  careers: number;
+  characters: number;
+  relationships: number;
+  organizations: number;
+  organization_members: number;
+  character_careers: number;
+  analyses: number;
+  memories: number;
+  foreshadows: number;
+  generation_history: number;
+  state_checkpoints: number;
+}
+
+export interface ProjectCloneResponse {
+  project_id: string;
+  source_project_id: string;
+  mode: ProjectCloneMode;
+  inherited_through_chapter?: number | null;
+  counts: ProjectCloneCounts;
+}
+
 // 向导专用的项目更新接口，包含向导流程控制字段
 export interface ProjectWizardUpdate extends ProjectUpdate {
   wizard_status?: 'incomplete' | 'completed';

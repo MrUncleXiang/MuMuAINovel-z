@@ -78,6 +78,9 @@ import type {
   AICallLog,
   ProjectCreationConfigData,
   ProjectCreationConfigResponse,
+  ProjectCloneRequest,
+  ProjectCloneResponse,
+  ProjectStateCheckpoint,
   SkillSummary,
 } from '../types';
 
@@ -447,6 +450,12 @@ export const projectApi = {
 
   saveCreationConfig: (id: string, config: ProjectCreationConfigData) =>
     api.put<unknown, ProjectCreationConfigResponse>(`/projects/${id}/creation-config`, config),
+
+  getStateCheckpoints: (id: string) =>
+    api.get<unknown, ProjectStateCheckpoint[]>(`/projects/${id}/state-checkpoints`),
+
+  cloneProject: (id: string, payload: ProjectCloneRequest) =>
+    api.post<unknown, ProjectCloneResponse>(`/projects/${id}/clone`, payload),
 
   generateCover: (id: string, overwrite: boolean = true) =>
     api.post<unknown, {
