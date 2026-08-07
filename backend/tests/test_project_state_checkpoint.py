@@ -155,6 +155,25 @@ class ProjectStateSnapshotSchemaTests(unittest.TestCase):
                 "unknown_entities": [],
             })
 
+    def test_large_snapshot_round_trip_is_stable(self):
+        snapshot = ProjectStateSnapshotV1(
+            chapter_number=100,
+            characters=[
+                {"id": f"character-{index}", "data": {
+                    "project_id": "project-1",
+                    "name": f"角色{index}",
+                    "current_state": "稳定" * 20,
+                }}
+                for index in range(1000)
+            ],
+        )
+
+        encoded = snapshot.model_dump_json()
+        restored = ProjectStateSnapshotV1.model_validate_json(encoded)
+
+        self.assertEqual(restored, snapshot)
+        self.assertLess(len(encoded.encode("utf-8")), 1_000_000)
+
 
 class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_chapter_creates_valid_checkpoint(self):
@@ -289,6 +308,35 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
         restore.assert_awaited_once()
         invalidate.assert_awaited_once()
         self.assertEqual(len(db.executed), 2)
+
+    async def test_vector_cleanup_failure_stops_before_relational_restore(self):
+        snapshot = ProjectStateSnapshotV1(chapter_number=2)
+        previous = SimpleNamespace(state_json=snapshot.model_dump(mode="json"))
+        affected = [SimpleNamespace(id="chapter-3", chapter_number=3)]
+        db = FakeRestoreSession(previous, affected)
+        memory_service = SimpleNamespace(
+            delete_chapter_memories=AsyncMock(return_value=False)
+        )
+        chapter = SimpleNamespace(
+            id="chapter-3",
+            project_id="project-1",
+            chapter_number=3,
+        )
+
+        with patch(
+            "app.services.project_state_checkpoint_service.restore_project_state",
+            AsyncMock(),
+        ) as restore:
+            with self.assertRaisesRegex(RuntimeError, "向量记忆清理失败"):
+                await prepare_project_state_for_chapter_rewrite(
+                    db,
+                    user_id="user-1",
+                    chapter=chapter,
+                    memory_service=memory_service,
+                )
+
+        restore.assert_not_awaited()
+        self.assertEqual(db.executed, [])
 
     async def test_read_filter_invalidates_checkpoint_with_changed_content(self):
         checkpoint = SimpleNamespace(
