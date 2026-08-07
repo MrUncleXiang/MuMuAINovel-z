@@ -34,30 +34,6 @@ def build_lightweight_chapter_summary(content: str, max_length: int = 300) -> st
     return normalized[:max_length]
 
 
-async def ensure_chapter_content_replaceable(
-    db: AsyncSession,
-    chapter: Chapter,
-    new_content: str | None,
-) -> None:
-    """Reject replacements whose already-applied derived state cannot be undone yet."""
-    if chapter_content_hash(chapter.content) == chapter_content_hash(new_content):
-        return
-    if not chapter.content:
-        return
-    materialized = await db.scalar(
-        select(AnalysisTask.id)
-        .where(
-            AnalysisTask.chapter_id == chapter.id,
-            AnalysisTask.materialized_at.is_not(None),
-        )
-        .limit(1)
-    )
-    if materialized:
-        raise FormalChapterConflictError(
-            "该章节已有正式分析，当前版本暂不能直接覆盖；请等待历史状态重建功能完成"
-        )
-
-
 async def prepare_chapter_content_replacement(
     *,
     db: AsyncSession,
