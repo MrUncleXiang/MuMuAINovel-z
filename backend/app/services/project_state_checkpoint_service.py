@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.career import Career, CharacterCareer
 from app.models.character import Character
 from app.models.foreshadow import Foreshadow
-from app.models.memory import StoryMemory
+from app.models.memory import PlotAnalysis, StoryMemory
 from app.models.project_creation_config import ProjectCreationConfig
 from app.models.project_state_checkpoint import ProjectStateCheckpoint
 from app.models.relationship import CharacterRelationship, Organization, OrganizationMember
@@ -388,12 +388,24 @@ async def register_latest_reliable_checkpoint(
             .order_by(AnalysisTask.created_at.desc())
             .limit(1)
         )
-        if (
-            task is None
-            or task.status != "completed"
-            or task.materialized_at is None
-            or not analysis_task_matches_content(task, chapter)
-        ):
+        if task is None or task.status != "completed":
+            raise ValueError(f"第{chapter.chapter_number}章缺少与当前正文一致的完整分析")
+        if task.content_hash:
+            proven = bool(
+                task.materialized_at is not None
+                and analysis_task_matches_content(task, chapter)
+            )
+        else:
+            legacy_analysis = await db.scalar(
+                select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter.id)
+            )
+            proven = bool(
+                legacy_analysis
+                and legacy_analysis.created_at
+                and chapter.updated_at
+                and legacy_analysis.created_at >= chapter.updated_at
+            )
+        if not proven:
             raise ValueError(f"第{chapter.chapter_number}章缺少与当前正文一致的完整分析")
         latest_tasks.append(task)
 
@@ -402,7 +414,7 @@ async def register_latest_reliable_checkpoint(
     existing = await db.scalar(select(ProjectStateCheckpoint).where(
         ProjectStateCheckpoint.project_id == project_id,
         ProjectStateCheckpoint.chapter_id == latest_chapter.id,
-        ProjectStateCheckpoint.content_hash == latest_task.content_hash,
+        ProjectStateCheckpoint.content_hash == analysis_task_hash(latest_chapter),
         ProjectStateCheckpoint.status == "valid",
     ))
     if existing is not None:
@@ -422,7 +434,7 @@ async def register_latest_reliable_checkpoint(
         chapter_id=latest_chapter.id,
         chapter_number=latest_chapter.chapter_number,
         analysis_task_id=latest_task.id,
-        content_hash=latest_task.content_hash,
+        content_hash=analysis_task_hash(latest_chapter),
         schema_version=snapshot.schema_version,
         status="valid",
         config_version=config_version,

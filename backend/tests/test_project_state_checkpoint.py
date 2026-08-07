@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -336,6 +337,40 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
             await register_latest_reliable_checkpoint(db, project_id="project-1")
 
         self.assertEqual(db.added, [])
+
+    async def test_legacy_analysis_newer_than_content_registers_latest_boundary(self):
+        now = datetime.now()
+        chapter = SimpleNamespace(
+            id="chapter-1",
+            chapter_number=1,
+            sub_index=1,
+            content="legacy content",
+            updated_at=now - timedelta(seconds=1),
+        )
+        task = SimpleNamespace(
+            id="legacy-task",
+            status="completed",
+            materialized_at=None,
+            content_hash=None,
+        )
+        analysis = SimpleNamespace(created_at=now)
+        db = SequencedSession(
+            scalar_values=[task, analysis, None, 2],
+            scalar_lists=[[chapter]],
+        )
+
+        with patch(
+            "app.services.project_state_checkpoint_service.capture_project_state",
+            AsyncMock(return_value=ProjectStateSnapshotV1(chapter_number=1)),
+        ):
+            checkpoint = await register_latest_reliable_checkpoint(
+                db,
+                project_id="project-1",
+            )
+
+        self.assertEqual(checkpoint.status, "valid")
+        self.assertEqual(checkpoint.content_hash, chapter_content_hash(chapter.content))
+        db.commit.assert_awaited_once()
 
 
 class ProjectStateCheckpointDatabaseTests(unittest.IsolatedAsyncioTestCase):
