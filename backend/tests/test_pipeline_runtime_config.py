@@ -9,6 +9,8 @@ from app.services.pipeline_service import _generate_one_chapter
 from app.services.pipeline_service import _next_pending_chapter
 from app.services.pipeline_service import merge_config
 from app.services.pipeline_service import PipelineStateError
+from app.services.pipeline_service import update_pipeline_config
+from app.models.novel_pipeline import PipelineStatus
 
 
 class FakeScalars:
@@ -193,6 +195,58 @@ class PipelineChapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("分析", error)
         self.assertFalse(retryable)
         self.assertEqual(generate.await_count, 1)
+
+
+class PipelineConfigApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_running_pipeline_rejects_configuration_changes(self):
+        pipeline = SimpleNamespace(status=PipelineStatus.RUNNING)
+
+        with patch(
+            "app.services.pipeline_service.get_pipeline",
+            AsyncMock(return_value=pipeline),
+        ):
+            with self.assertRaisesRegex(PipelineStateError, "请先暂停"):
+                await update_pipeline_config(
+                    object(),
+                    user_id="user-1",
+                    pipeline_id="pipeline-1",
+                    config={},
+                )
+
+    async def test_paused_pipeline_applies_new_runtime_snapshot(self):
+        pipeline = SimpleNamespace(
+            status=PipelineStatus.PAUSED,
+            project_id="project-1",
+            config_snapshot={"milestone_chapters": 30},
+        )
+        project = SimpleNamespace(id="project-1")
+        db = SimpleNamespace(
+            get=AsyncMock(return_value=project),
+            commit=AsyncMock(),
+        )
+        resolved = {"config_version": 8, "milestone_chapters": 20}
+
+        with (
+            patch(
+                "app.services.pipeline_service.get_pipeline",
+                AsyncMock(return_value=pipeline),
+            ),
+            patch(
+                "app.services.pipeline_service._resolve_pipeline_runtime_config",
+                AsyncMock(return_value=resolved),
+            ) as resolve,
+        ):
+            result = await update_pipeline_config(
+                db,
+                user_id="user-1",
+                pipeline_id="pipeline-1",
+                config={"milestone_chapters": 20},
+            )
+
+        self.assertIs(result, pipeline)
+        self.assertEqual(pipeline.config_snapshot, resolved)
+        resolve.assert_awaited_once()
+        db.commit.assert_awaited_once()
 
 
 if __name__ == "__main__":
