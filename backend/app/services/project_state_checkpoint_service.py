@@ -116,6 +116,18 @@ async def create_project_state_checkpoint(
             .order_by(ProjectStateCheckpoint.created_at.desc())
             .limit(1)
         )
+        if previous is not None:
+            previous_chapter = await db.scalar(
+                select(Chapter).where(Chapter.id == previous.chapter_id)
+            )
+            if (
+                previous_chapter is None
+                or previous.content_hash != analysis_task_hash(previous_chapter)
+            ):
+                previous.status = "invalid"
+                previous.invalid_reason = "上一章检查点正文版本已变化"
+                previous.invalidated_at = datetime.now()
+                previous = None
     later_materialized = await db.scalar(
         select(AnalysisTask.id)
         .join(Chapter, Chapter.id == AnalysisTask.chapter_id)

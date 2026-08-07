@@ -196,6 +196,37 @@ class ProjectStateCheckpointCreationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("缺少上一章", checkpoint.invalid_reason)
         self.assertIn("后续分析", checkpoint.invalid_reason)
 
+    async def test_stale_previous_checkpoint_breaks_continuity(self):
+        previous = SimpleNamespace(
+            chapter_id="chapter-1",
+            content_hash=chapter_content_hash("old"),
+            status="valid",
+            invalid_reason=None,
+            invalidated_at=None,
+        )
+        previous_chapter = SimpleNamespace(id="chapter-1", content="changed")
+        db = FakeCheckpointSession(None, previous, previous_chapter, None, None)
+        chapter = SimpleNamespace(
+            id="chapter-2",
+            project_id="project-1",
+            chapter_number=2,
+        )
+        task = SimpleNamespace(id="task-2", content_hash="hash-2")
+
+        with patch(
+            "app.services.project_state_checkpoint_service.capture_project_state",
+            AsyncMock(return_value=ProjectStateSnapshotV1(chapter_number=2)),
+        ):
+            checkpoint = await create_project_state_checkpoint(
+                db,
+                chapter=chapter,
+                analysis_task=task,
+            )
+
+        self.assertEqual(previous.status, "invalid")
+        self.assertEqual(checkpoint.status, "invalid")
+        self.assertIn("缺少上一章", checkpoint.invalid_reason)
+
     async def test_chapter_change_invalidates_all_dependent_checkpoints(self):
         db = FakeCheckpointSession()
 
