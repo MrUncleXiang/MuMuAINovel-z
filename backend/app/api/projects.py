@@ -7,6 +7,7 @@ from typing import List
 import json
 from urllib.parse import quote
 from app.database import get_db
+from app.api.common import verify_project_access
 from app.models.project import Project
 from app.models.character import Character
 from app.models.outline import Outline
@@ -24,6 +25,11 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectListResponse
 )
+from app.schemas.project_creation_config import (
+    ProjectCreationConfigData,
+    ProjectCreationConfigResponse,
+    ProjectCreationRuntimeSnapshot,
+)
 from app.schemas.import_export import (
     ExportOptions,
     ImportValidationResult,
@@ -31,6 +37,11 @@ from app.schemas.import_export import (
 )
 from app.services.import_export_service import ImportExportService
 from app.services.memory_service import memory_service
+from app.services.project_creation_config_service import (
+    freeze_project_creation_config,
+    get_project_creation_config,
+    save_project_creation_config,
+)
 from app.logger import get_logger
 from app.utils.data_consistency import (
     run_full_data_consistency_check,
@@ -40,6 +51,64 @@ from app.utils.data_consistency import (
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/projects", tags=["项目管理"])
+
+
+@router.get(
+    "/{project_id}/creation-config",
+    response_model=ProjectCreationConfigResponse,
+    summary="获取本书创作配置",
+)
+async def get_creation_config(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    project = await verify_project_access(project_id, user_id, db)
+    return await get_project_creation_config(db, project=project, user_id=user_id)
+
+
+@router.put(
+    "/{project_id}/creation-config",
+    response_model=ProjectCreationConfigResponse,
+    summary="保存本书创作配置",
+)
+async def put_creation_config(
+    project_id: str,
+    payload: ProjectCreationConfigData,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    project = await verify_project_access(project_id, user_id, db)
+    try:
+        return await save_project_creation_config(
+            db,
+            project=project,
+            user_id=user_id,
+            config=payload,
+        )
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get(
+    "/{project_id}/creation-config/runtime-snapshot",
+    response_model=ProjectCreationRuntimeSnapshot,
+    summary="校验并冻结本书运行配置",
+)
+async def get_creation_runtime_snapshot(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    project = await verify_project_access(project_id, user_id, db)
+    try:
+        return await freeze_project_creation_config(db, project=project, user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("", response_model=ProjectResponse, summary="创建项目")

@@ -11,6 +11,7 @@ from app.models.settings import Settings
 from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.writing_style import WritingStyle
 from app.models.project_default_style import ProjectDefaultStyle
+from app.models.project_creation_config import ProjectCreationConfig
 from app.models.mcp_plugin import MCPPlugin
 from app.models.user import User, UserPassword
 from app.models.regeneration_task import RegenerationTask
@@ -43,6 +44,7 @@ __all__ = [
     "PlotAnalysis",
     "WritingStyle",
     "ProjectDefaultStyle",
+    "ProjectCreationConfig",
     "MCPPlugin",
     "User",
     "UserPassword",
