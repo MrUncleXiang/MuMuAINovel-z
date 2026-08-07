@@ -809,6 +809,15 @@ export default function Chapters() {
     }).length;
   }, [sortedChapters, analysisTasksMap]);
 
+  const stopComparisonPolling = () => {
+    if (comparisonPollingRef.current !== null) {
+      window.clearInterval(comparisonPollingRef.current);
+      comparisonPollingRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopComparisonPolling(), []);
+
   if (!currentProject) return null;
 
   // 获取人称的中文显示文本（同时支持中英文值）
@@ -840,7 +849,7 @@ export default function Chapters() {
       form.setFieldsValue(chapter);
       setEditingId(id);
       setIsModalOpen(true);
-      // 异步加载该章最近的对比批次（批量多模型对比生成的批次也能在此查看）
+      // 异步加载该章最近的对比批次（批量独立候选预览也能在此查看）
       llmComparisonApi.list({ target_type: 'chapter', target_id: id, limit: 1 })
         .then(res => {
           if (res.items && res.items.length > 0) {
@@ -1119,15 +1128,6 @@ export default function Chapters() {
     }
   };
 
-  const stopComparisonPolling = () => {
-    if (comparisonPollingRef.current !== null) {
-      window.clearInterval(comparisonPollingRef.current);
-      comparisonPollingRef.current = null;
-    }
-  };
-
-  useEffect(() => () => stopComparisonPolling(), []);
-
   const pollComparisonBatch = (batchId: string) => {
     stopComparisonPolling();
     comparisonPollingRef.current = window.setInterval(async () => {
@@ -1199,11 +1199,13 @@ export default function Chapters() {
           const batch = await chapterApi.adoptComparisonCandidate(editingId, comparisonBatch.id, candidate.id);
           setComparisonBatch(batch);
           editorForm.setFieldsValue({ content: candidate.output_text || '' });
-          await refreshChapters();
+          const latestChapters = await refreshChapters();
+          await loadAnalysisTasks(latestChapters, currentProject?.id);
+          startPollingTask(editingId);
           if (currentProject) {
             setCurrentProject(await projectApi.getProject(currentProject.id));
           }
-          message.success('已采用为正式章节');
+          message.success('已采用为正式章节，正在按本书配置分析');
         } catch (error) {
           const apiError = error as ApiError;
           message.error(apiError.response?.data?.detail || '采用失败');
@@ -1339,7 +1341,7 @@ export default function Chapters() {
   }) => {
     if (!currentProject?.id) return;
 
-    // 多模型对比批量模式
+    // 多模型独立候选预览模式
     if (batchMode === 'compare') {
       if (batchComparisonSelections.length < 2) {
         message.warning('请选择至少 2 个模型用于对比');
@@ -1362,7 +1364,7 @@ export default function Chapters() {
         });
         if (!resp.ok) {
           const err = await resp.json();
-          throw new Error(err.detail || '创建批量对比任务失败');
+          throw new Error(err.detail || '创建批量候选预览失败');
         }
         const data = await resp.json();
         // 登记到悬浮任务框查看进度
@@ -1377,11 +1379,12 @@ export default function Chapters() {
           startBatchPolling(data.task_id);
           eventBus.emit('background-task-created');
         }
-        message.success(data.message || '批量对比任务已创建（右下角任务面板查看进度）');
-        console.log('[批量对比] 创建结果:', data);
+        message.success(data.message || '批量候选预览已创建（右下角任务面板查看进度）');
+        console.log('[批量候选预览] 创建结果:', data);
         return;
-      } catch (error: any) {
-        message.error(error.message || '创建批量对比任务失败');
+      } catch (error: unknown) {
+        const err = error as Error;
+        message.error(err.message || '创建批量候选预览失败');
         return;
       } finally {
         setBatchGenerating(false);
@@ -3293,14 +3296,14 @@ export default function Chapters() {
               </Form.Item>
             </div>
 
-            {/* 生成方式：单模型批量 / 多模型对比批量 */}
+            {/* 生成方式：单模型连续批量 / 多模型独立候选预览 */}
             <Form.Item label="生成方式" style={{ marginBottom: 12 }}>
               <Segmented
                 block
                 value={batchMode}
                 options={[
                   { label: '单模型批量', value: 'single' },
-                  { label: '多模型对比批量', value: 'compare' },
+                  { label: '多模型候选预览', value: 'compare' },
                 ]}
                 onChange={value => setBatchMode(value as 'single' | 'compare')}
                 disabled={batchGenerating}
@@ -3308,8 +3311,8 @@ export default function Chapters() {
             </Form.Item>
             {batchMode === 'compare' && (
               <Form.Item
-                label="选择模型（每章并行生成候选，生成后逐章对比采用）"
-                tooltip="每个模型都会为每章生成一版候选；注意 token 消耗为模型数倍"
+                label="选择模型（为每章分别生成独立候选）"
+                tooltip="候选不会自动成为下一章上下文；只有逐章采用并完成正式分析后，才进入书籍的连续创作链路。Token 消耗约为模型数倍。"
                 style={{ marginBottom: 12 }}
               >
                 <LLMMultiSelector

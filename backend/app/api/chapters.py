@@ -68,21 +68,25 @@ from app.models.llm_comparison import LLMComparisonBatch
 from app.models.llm_comparison import LLMComparisonCandidate
 from app.schemas.llm_comparison import LLMComparisonBatchResponse, LLMComparisonCandidateResponse
 from app.services.chapter_comparison_service import (
+    apply_chapter_candidate,
     create_chapter_comparison,
     generate_chapter_candidate,
 )
 from app.services.llm_comparison_service import (
     ComparisonNotFoundError,
     ComparisonStateError,
+    adopt_candidate,
     get_owned_batch,
     list_candidates,
     retry_candidate,
     run_batch,
 )
 from app.services.analysis_comparison_service import (
+    apply_analysis_candidate,
     create_analysis_comparison,
     generate_analysis_candidate,
 )
+from app.services.project_creation_config_service import freeze_project_creation_config
 from app.services.chapter_lifecycle_service import (
     analysis_task_matches_content,
     chapter_content_hash,
@@ -942,13 +946,23 @@ async def retry_analysis_comparison_candidate(chapter_id: str, batch_id: str, ca
 @router.post("/{chapter_id}/analysis-comparison-batches/{batch_id}/adopt/{candidate_id}", response_model=LLMComparisonBatchResponse)
 async def adopt_analysis_comparison_candidate(chapter_id: str, batch_id: str, candidate_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = getattr(request.state, "user_id", None)
-    batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
-    if batch.target_type != "analysis" or batch.target_id != chapter_id:
-        raise HTTPException(status_code=404, detail="分析候选不存在")
-    raise HTTPException(
-        status_code=409,
-        detail="分析候选采用正在整改，候选仍可预览和重试，暂不能写入正式分析",
-    )
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "analysis" or batch.target_id != chapter_id:
+            raise ComparisonNotFoundError("分析候选不存在")
+        batch, _, _ = await adopt_candidate(
+            db,
+            batch_id=batch_id,
+            candidate_id=candidate_id,
+            user_id=user_id,
+            apply_target=apply_analysis_candidate,
+        )
+        await db.refresh(batch)
+        return await _chapter_comparison_response(db, batch)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (ComparisonStateError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/{chapter_id}/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建章节多模型候选")
@@ -1023,13 +1037,45 @@ async def adopt_chapter_comparison_candidate(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = getattr(request.state, "user_id", None)
-    batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
-    if batch.target_type != "chapter" or batch.target_id != chapter_id:
-        raise HTTPException(status_code=404, detail="章节候选批次不存在")
-    raise HTTPException(
-        status_code=409,
-        detail="章节候选采用正在整改，候选仍可预览、编辑和重试，暂不能写入正式正文",
-    )
+    try:
+        batch = await get_owned_batch(db, batch_id=batch_id, user_id=user_id)
+        if batch.target_type != "chapter" or batch.target_id != chapter_id:
+            raise ComparisonNotFoundError("章节候选批次不存在")
+        project = await verify_project_access(batch.project_id, user_id, db)
+        runtime = await freeze_project_creation_config(
+            db,
+            project=project,
+            user_id=user_id,
+        )
+        batch, candidate, adopted_now = await adopt_candidate(
+            db,
+            batch_id=batch_id,
+            candidate_id=candidate_id,
+            user_id=user_id,
+            apply_target=apply_chapter_candidate,
+        )
+        if adopted_now:
+            analysis_task_id = (candidate.output_data or {}).get("formal_analysis_task_id")
+            if not analysis_task_id:
+                raise RuntimeError("章节已采用，但未创建正式分析任务")
+            _schedule_analysis_background(analyze_chapter_background(
+                chapter_id=chapter_id,
+                user_id=user_id,
+                project_id=batch.project_id,
+                task_id=analysis_task_id,
+                provider_config_id=runtime.analysis.id,
+                model=runtime.analysis.model,
+                enable_mcp=bool(runtime.parameters.get("mcp_enabled", True)),
+                allowed_mcp_plugin_ids=[
+                    plugin.id for plugin in runtime.mcp_plugins if plugin.id
+                ],
+            ))
+        await db.refresh(batch)
+        return await _chapter_comparison_response(db, batch)
+    except ComparisonNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (ComparisonStateError, FormalChapterConflictError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.put("/{chapter_id}/comparison-batches/{batch_id}/candidates/{candidate_id}", response_model=LLMComparisonCandidateResponse, summary="编辑章节候选")
@@ -2817,7 +2863,7 @@ def calculate_estimated_time(
 
 
 class BatchCompareRequest(BaseModel):
-    """批量多模型对比：范围内每章用所选服务各生成一版候选。"""
+    """批量候选预览：各章独立使用冻结上下文生成，不形成连续正文。"""
     start_chapter_number: int = Field(..., description="起始章节序号")
     count: int = Field(..., description="章节数量", ge=1, le=10)
     selections: List[LLMComparisonSelection] = Field(..., min_length=2, max_length=4)
@@ -2828,14 +2874,14 @@ class BatchCompareRequest(BaseModel):
     skill_key: Optional[str] = None
 
 
-@router.post("/project/{project_id}/batch-compare", summary="批量多模型对比生成（每章多版本候选）")
+@router.post("/project/{project_id}/batch-compare", summary="批量生成各章独立候选预览")
 async def batch_compare_chapters(
     project_id: str,
     payload: BatchCompareRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """范围内每章创建一个多模型对比批次，后台并行生成候选，用户在章节对比界面审阅采用。"""
+    """各章独立创建候选预览；未采用结果不会成为后续章节的正式上下文。"""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录")
@@ -2900,7 +2946,10 @@ async def batch_compare_chapters(
 
     return {
         "task_id": compare_task.id,
-        "message": f"已创建 {len(created_batches)} 章的对比任务（每章 {len(payload.selections)} 个候选）",
+        "message": (
+            f"已创建 {len(created_batches)} 章的独立候选预览"
+            f"（每章 {len(payload.selections)} 个候选，不会自动连续创作）"
+        ),
         "batches": created_batches,
     }
 
