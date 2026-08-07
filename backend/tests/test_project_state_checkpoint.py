@@ -1,0 +1,78 @@
+import json
+import unittest
+
+import app.database  # noqa: F401 - initialize model registry
+from pydantic import ValidationError
+
+from app.models.character import Character
+from app.models.foreshadow import Foreshadow
+from app.models.memory import StoryMemory
+from app.schemas.project_state_checkpoint import ProjectStateSnapshotV1
+from app.services.project_state_checkpoint_service import serialize_snapshot_entity
+
+
+class ProjectStateSnapshotSchemaTests(unittest.TestCase):
+    def test_serializes_mutable_entity_state_with_stable_source_id(self):
+        character = Character(
+            id="character-1",
+            project_id="project-1",
+            name="林川",
+            current_state="警觉",
+            state_updated_chapter=8,
+            main_career_id="career-1",
+            main_career_stage=3,
+        )
+
+        entity = serialize_snapshot_entity(character)
+
+        self.assertEqual(entity.id, "character-1")
+        self.assertNotIn("id", entity.data)
+        self.assertEqual(entity.data["project_id"], "project-1")
+        self.assertEqual(entity.data["current_state"], "警觉")
+        self.assertEqual(entity.data["main_career_stage"], 3)
+
+    def test_snapshot_round_trip_preserves_future_sensitive_state(self):
+        foreshadow = Foreshadow(
+            id="foreshadow-1",
+            project_id="project-1",
+            title="旧钥匙",
+            content="尚未回收",
+            status="planted",
+            plant_chapter_number=3,
+            actual_resolve_chapter_number=None,
+        )
+        memory = StoryMemory(
+            id="memory-1",
+            project_id="project-1",
+            chapter_id="chapter-8",
+            memory_type="foreshadow",
+            content="主角发现旧钥匙",
+            story_timeline=8,
+            is_foreshadow=1,
+        )
+        snapshot = ProjectStateSnapshotV1(
+            chapter_number=8,
+            foreshadows=[serialize_snapshot_entity(foreshadow)],
+            story_memories=[serialize_snapshot_entity(memory)],
+        )
+
+        restored = ProjectStateSnapshotV1.model_validate_json(snapshot.model_dump_json())
+
+        self.assertEqual(restored, snapshot)
+        self.assertEqual(restored.foreshadows[0].data["status"], "planted")
+        self.assertIsNone(
+            restored.foreshadows[0].data["actual_resolve_chapter_number"]
+        )
+        self.assertNotIn("尚未回收", json.dumps(restored.story_memories[0].data))
+
+    def test_rejects_unknown_snapshot_contract_fields(self):
+        with self.assertRaises(ValidationError):
+            ProjectStateSnapshotV1.model_validate({
+                "schema_version": 1,
+                "chapter_number": 1,
+                "unknown_entities": [],
+            })
+
+
+if __name__ == "__main__":
+    unittest.main()

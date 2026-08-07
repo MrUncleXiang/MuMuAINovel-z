@@ -18,7 +18,7 @@ Base = declarative_base()
 # 这必须在 Base 创建之后、init_db 之前导入
 from app.models import (
     Project, Outline, Character, Chapter, GenerationHistory,
-    Settings, WritingStyle, ProjectDefaultStyle, ProjectCreationConfig,
+    Settings, WritingStyle, ProjectDefaultStyle, ProjectCreationConfig, ProjectStateCheckpoint,
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,

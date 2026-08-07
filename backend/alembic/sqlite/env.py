@@ -22,7 +22,7 @@ from app.config import settings
 from app.database import Base
 from app.models import (
     Project, Outline, Character, Chapter, GenerationHistory,
-    Settings, WritingStyle, ProjectDefaultStyle, ProjectCreationConfig,
+    Settings, WritingStyle, ProjectDefaultStyle, ProjectCreationConfig, ProjectStateCheckpoint,
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,
