@@ -101,6 +101,7 @@ class AIService:
         project_id: Optional[str] = None,
         chapter_id: Optional[str] = None,
         task_trace_id: Optional[str] = None,
+        allowed_mcp_plugin_ids: Optional[List[str]] = None,
     ):
         self.raw_api_provider = (api_provider or app_settings.default_ai_provider or "openai").lower().strip()
         self.api_provider = normalize_provider(self.raw_api_provider)
@@ -120,6 +121,7 @@ class AIService:
         self.project_id = project_id
         self.chapter_id = chapter_id
         self.task_trace_id = task_trace_id or str(uuid.uuid4())
+        self.allowed_mcp_plugin_ids = allowed_mcp_plugin_ids
         self._cached_tools: Optional[List[Dict]] = None
         self._tools_loaded = False
         
@@ -326,7 +328,8 @@ class AIService:
                 user_id=self.user_id,
                 db_session=self.db_session,
                 use_cache=True,
-                force_refresh=force_refresh
+                force_refresh=force_refresh,
+                allowed_plugin_ids=self.allowed_mcp_plugin_ids,
             )
             self._tools_loaded = True
             
@@ -791,6 +794,7 @@ def create_user_ai_service_with_mcp(
     project_id: Optional[str] = None,
     chapter_id: Optional[str] = None,
     task_trace_id: Optional[str] = None,
+    allowed_mcp_plugin_ids: Optional[List[str]] = None,
 ) -> AIService:
     """
     创建支持MCP的用户AI服务
@@ -828,4 +832,5 @@ def create_user_ai_service_with_mcp(
         project_id=project_id,
         chapter_id=chapter_id,
         task_trace_id=task_trace_id,
+        allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
     )

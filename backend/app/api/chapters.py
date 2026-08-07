@@ -668,6 +668,8 @@ async def analyze_chapter_background(
     ai_service: Optional[AIService] = None,
     provider_config_id: Optional[str] = None,
     model: Optional[str] = None,
+    enable_mcp: bool = True,
+    allowed_mcp_plugin_ids: Optional[list[str]] = None,
 ) -> bool:
     """执行有硬超时保障的章节分析，并确保中断后任务进入终态。"""
     try:
@@ -680,6 +682,8 @@ async def analyze_chapter_background(
                 ai_service=ai_service,
                 provider_config_id=provider_config_id,
                 model=model,
+                enable_mcp=enable_mcp,
+                allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
             ),
             timeout=ANALYSIS_TASK_TIMEOUT_SECONDS,
         )
@@ -709,6 +713,8 @@ async def _analyze_chapter_background_impl(
     ai_service: Optional[AIService] = None,
     provider_config_id: Optional[str] = None,
     model: Optional[str] = None,
+    enable_mcp: bool = True,
+    allowed_mcp_plugin_ids: Optional[list[str]] = None,
 ) -> bool:
     """
     后台异步分析章节（支持并发，使用锁保护数据库写入）
@@ -797,7 +803,8 @@ async def _analyze_chapter_background_impl(
                 task_trace_id=task_id,
                 project_id=project_id,
                 chapter_id=chapter_id,
-                enable_mcp=True,
+                enable_mcp=enable_mcp,
+                allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
             )
 
         analysis_context = await build_chapter_analysis_context(
@@ -1813,6 +1820,7 @@ async def _run_chapter_generation_bg(
     temp_narrative_perspective = task_input.get("narrative_perspective")
     enable_mcp = task_input.get("enable_mcp", True)
     skill_key = task_input.get("skill_key")
+    schedule_analysis = task_input.get("schedule_analysis", True)
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2033,6 +2041,8 @@ async def _run_chapter_generation_bg(
         "max_tokens": calculated_max_tokens,
         "auto_mcp": bool(enable_mcp)
     }
+    if task_input.get("temperature") is not None:
+        generate_kwargs["temperature"] = float(task_input["temperature"])
     if custom_model:
         generate_kwargs["model"] = custom_model
 
@@ -2064,6 +2074,12 @@ async def _run_chapter_generation_bg(
 
         await asyncio.sleep(0)
 
+    minimum_content_length = task_input.get("minimum_content_length")
+    if minimum_content_length and len(full_content) < int(minimum_content_length):
+        raise ValueError(
+            f"生成结果不足（{len(full_content)}字 < 目标{int(minimum_content_length)}字）"
+        )
+
     # === 保存阶段 ===
     await tracker.saving("正在保存章节...", 0.3)
 
@@ -2088,15 +2104,16 @@ async def _run_chapter_generation_bg(
     await asyncio.sleep(0.05)
 
     # 启动后台分析
-    _schedule_analysis_background(
-        analyze_chapter_background(
-            chapter_id=chapter_id,
-            user_id=user_id,
-            project_id=current_chapter.project_id,
-            task_id=analysis_task.id,
-            ai_service=ai_service
+    if schedule_analysis:
+        _schedule_analysis_background(
+            analyze_chapter_background(
+                chapter_id=chapter_id,
+                user_id=user_id,
+                project_id=current_chapter.project_id,
+                task_id=analysis_task.id,
+                ai_service=ai_service
+            )
         )
-    )
 
     # === 完成 ===
     await tracker.complete(f"创作完成！共 {new_word_count} 字")
@@ -2122,6 +2139,8 @@ async def _run_chapter_generation_bg(
             await result_db.commit()
     except Exception as e:
         logger.warning(f"⚠️ 更新任务结果失败: {e}")
+
+    return analysis_task
 
 
 def _build_analysis_task_status_payload(

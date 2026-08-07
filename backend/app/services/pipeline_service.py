@@ -13,6 +13,7 @@
 回滚（分内容/分阶段/纯删除）由 checkpoints 任务提供接口，本模块提供编排钩子。
 """
 import asyncio
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Optional
 
@@ -49,6 +50,8 @@ class PipelineNotFoundError(ValueError):
 
 class PipelineStateError(ValueError):
     pass
+
+
 def default_pipeline_config() -> dict:
     return {
         "milestone_chapters": 30,          # 里程碑：累计章节数 ≥ 30 暂停
@@ -71,14 +74,89 @@ def default_pipeline_config() -> dict:
 
 
 def merge_config(user_config: Optional[dict]) -> dict:
+    def merge(target: dict, updates: dict) -> None:
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                merge(target[key], value)
+            else:
+                target[key] = deepcopy(value)
+
     cfg = default_pipeline_config()
     if user_config:
-        for k, v in user_config.items():
-            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
-                cfg[k].update(v)
-            else:
-                cfg[k] = v
+        merge(cfg, user_config)
     return cfg
+
+
+def build_pipeline_runtime_config(
+    runtime_snapshot: dict,
+    orchestration_config: Optional[dict] = None,
+) -> dict:
+    """Combine pipeline controls with the project-owned creation snapshot.
+
+    Model and creation-resource selections always come from the project config;
+    stale pipeline payloads cannot silently override them.
+    """
+    cfg = merge_config(orchestration_config)
+    parameters = runtime_snapshot.get("parameters") or {}
+    pipeline_preferences = parameters.get("pipeline") or {}
+    chapter = runtime_snapshot.get("chapter") or {}
+    analysis = runtime_snapshot.get("analysis") or {}
+    skill = runtime_snapshot.get("skill") or {}
+    style = runtime_snapshot.get("writing_style") or {}
+    plugins = runtime_snapshot.get("mcp_plugins") or []
+
+    cfg["models"]["chapter"] = {
+        "provider_config_id": chapter.get("id"),
+        "model": chapter.get("model"),
+    }
+    cfg["models"]["analysis"] = {
+        "provider_config_id": analysis.get("id"),
+        "model": analysis.get("model"),
+    }
+    cfg["params"]["chapter"].update({
+        "target_word_count": parameters.get("target_word_count", 3000),
+        "temperature": parameters.get("temperature", 0.7),
+        "max_tokens": parameters.get("max_tokens"),
+    })
+    cfg["skill_key"] = skill.get("id")
+    cfg["style_id"] = int(style["id"]) if style.get("id") is not None else None
+    cfg["enable_mcp"] = bool(parameters.get("mcp_enabled", False))
+    cfg["mcp_plugin_ids"] = [plugin["id"] for plugin in plugins if plugin.get("id")]
+    cfg["narrative_perspective"] = parameters.get("narrative_perspective")
+    cfg["config_version"] = runtime_snapshot.get("config_version")
+    cfg["creation_runtime_snapshot"] = deepcopy(runtime_snapshot)
+
+    if "checkpoint_every_n_chapters" in pipeline_preferences:
+        cfg["checkpoint_every_n"] = pipeline_preferences["checkpoint_every_n_chapters"]
+    if "checkpoint_on_volume_end" in pipeline_preferences:
+        cfg["checkpoint_on_volume_end"] = pipeline_preferences["checkpoint_on_volume_end"]
+    budget_limit = pipeline_preferences.get("budget_limit")
+    if budget_limit is not None:
+        cfg["budget"]["max_amount_cents"] = round(float(budget_limit) * 100)
+    return cfg
+
+
+async def _resolve_pipeline_runtime_config(
+    db: AsyncSession,
+    *,
+    project: Project,
+    user_id: str,
+    orchestration_config: Optional[dict] = None,
+) -> dict:
+    from app.services.project_creation_config_service import freeze_project_creation_config
+
+    try:
+        snapshot = await freeze_project_creation_config(
+            db,
+            project=project,
+            user_id=user_id,
+        )
+    except ValueError as exc:
+        raise PipelineStateError(f"项目创作配置不可用：{exc}") from exc
+    return build_pipeline_runtime_config(
+        snapshot.model_dump(mode="json"),
+        orchestration_config,
+    )
 
 
 # ---------- 查询 ----------
@@ -124,6 +202,18 @@ async def start_pipeline(
     config: Optional[dict] = None,
 ) -> NovelPipeline:
     """创建流水线并启动后台推进。"""
+    project = await db.scalar(select(Project).where(
+        Project.id == project_id,
+        Project.user_id == user_id,
+    ))
+    if project is None:
+        raise PipelineNotFoundError("项目不存在或无权限")
+    runtime_config = await _resolve_pipeline_runtime_config(
+        db,
+        project=project,
+        user_id=user_id,
+        orchestration_config=config,
+    )
     existing = await get_pipeline_by_project(db, project_id, user_id)
     if existing and existing.status in {PipelineStatus.RUNNING, PipelineStatus.AWAITING_REVIEW}:
         raise PipelineStateError("该项目已有正在运行的流水线")
@@ -134,7 +224,7 @@ async def start_pipeline(
             project_id=project_id,
             status=PipelineStatus.RUNNING,
             current_stage=PipelineStage.BOOK,
-            config_snapshot=merge_config(config),
+            config_snapshot=runtime_config,
         )
         db.add(pipeline)
         await db.commit()
@@ -143,7 +233,8 @@ async def start_pipeline(
         pipeline = existing
         pipeline.status = PipelineStatus.RUNNING
         pipeline.current_stage = PipelineStage.BOOK
-        pipeline.config_snapshot = merge_config(config or pipeline.config_snapshot)
+        pipeline.config_snapshot = runtime_config
+        pipeline.last_error = None
         await db.commit()
 
     # 建书阶段：若项目已有大纲则直接进入章节循环；否则保持在 BOOK 阶段，由后台循环自动一键建书。
@@ -179,7 +270,17 @@ async def resume_pipeline(db: AsyncSession, *, user_id: str, pipeline_id: str) -
         raise PipelineStateError(f"流水线当前状态为 {pipeline.status}，不能恢复")
     if pipeline.current_stage == PipelineStage.CHECKPOINT:
         pipeline.current_stage = PipelineStage.CHAPTER_LOOP
+    project = await db.get(Project, pipeline.project_id)
+    if project is None:
+        raise PipelineStateError("项目不存在")
+    pipeline.config_snapshot = await _resolve_pipeline_runtime_config(
+        db,
+        project=project,
+        user_id=user_id,
+        orchestration_config=pipeline.config_snapshot,
+    )
     pipeline.status = PipelineStatus.RUNNING
+    pipeline.last_error = None
     await db.commit()
     _spawn_loop(await _session_factory_for(user_id), pipeline.id, user_id)
     return pipeline
@@ -208,11 +309,19 @@ async def update_pipeline_config(
     pipeline_id: str,
     config: dict,
 ) -> NovelPipeline:
-    """更新流水线配置（运行中也可改，下次循环迭代生效）。"""
+    """Apply pipeline controls and the latest project creation config."""
     pipeline = await get_pipeline(db, pipeline_id, user_id)
-    if pipeline.status == PipelineStatus.STOPPED:
-        raise PipelineStateError("流水线已停止，无法修改配置")
-    pipeline.config_snapshot = merge_config({**pipeline.config_snapshot, **config})
+    if pipeline.status not in {PipelineStatus.PAUSED, PipelineStatus.AWAITING_REVIEW}:
+        raise PipelineStateError("请先暂停流水线，再应用新配置")
+    project = await db.get(Project, pipeline.project_id)
+    if project is None:
+        raise PipelineStateError("项目不存在")
+    pipeline.config_snapshot = await _resolve_pipeline_runtime_config(
+        db,
+        project=project,
+        user_id=user_id,
+        orchestration_config={**pipeline.config_snapshot, **config},
+    )
     await db.commit()
     return pipeline
 
@@ -425,34 +534,30 @@ async def _run_pipeline_loop(
                         await db.commit()
                         continue
 
-                    # 生成该章节（复用现有后台生成逻辑），空内容/字数不足/失败自动重试
+                    # 生成正文后同步完成正式分析；分析失败必须停住，不能推进下一章。
                     ok, err = False, ""
                     content_ok = False
                     cfg = pipeline.config_snapshot or {}
                     target_words = int(((cfg.get("params") or {}).get("chapter") or {}).get("target_word_count", 2500))
                     min_words = int(target_words * 0.7)  # 字数达标线：目标 70%
                     for attempt in range(1, 4):
-                        ok, err = await _generate_one_chapter(db, pipeline, chapter, user_id)
+                        ok, err, retryable = await _generate_one_chapter(
+                            db,
+                            pipeline,
+                            chapter,
+                            user_id,
+                            minimum_content_length=min_words,
+                        )
                         if not ok:
+                            if not retryable:
+                                break
                             await asyncio.sleep(5 * attempt)
                             continue
-                        # 校验内容非空且字数达标（推理型模型可能只输出思考，或字数远低于目标）
-                        fresh = await db.get(Chapter, chapter.id)
-                        content_len = len((fresh.content or "") if fresh else "")
-                        if content_len >= min_words:
-                            content_ok = True
-                            break
-                        err = f"生成结果不足（{content_len}字 < 目标{min_words}字）"
-                        chapter.status = ChapterStatus.PENDING
-                        chapter.content = ""
-                        chapter.word_count = 0
-                        await db.commit()
-                        await asyncio.sleep(5 * attempt)
+                        content_ok = True
+                        break
                     if not content_ok:
-                        # 连续不达标/失败 3 次后必须终止，避免死循环烧钱
-                        chapter.status = ChapterStatus.FAILED
                         pipeline.status = PipelineStatus.PAUSED
-                        pipeline.last_error = f"第{chapter.chapter_number}章连续生成失败/字数不足：{err}"
+                        pipeline.last_error = f"第{chapter.chapter_number}章未能完成正文和分析：{err}"
                         await db.commit()
                         return
 
@@ -658,9 +763,11 @@ async def _generate_one_chapter(
     pipeline: NovelPipeline,
     chapter: Chapter,
     user_id: str,
-) -> tuple[bool, str]:
-    """生成单章正文（复用现有后台章节生成逻辑）。"""
-    from app.api.chapters import _run_chapter_generation_bg
+    *,
+    minimum_content_length: int,
+) -> tuple[bool, str, bool]:
+    """Generate and fully analyze one chapter using the formal lifecycle."""
+    from app.api.chapters import analyze_chapter_background, _run_chapter_generation_bg
     from app.services.background_task_service import TaskProgressTracker
     from app.services.ai_provider_service import create_routed_ai_service
 
@@ -670,6 +777,9 @@ async def _generate_one_chapter(
     model = chapter_model_cfg.get("model")
     params = (cfg.get("params") or {}).get("chapter") or {}
     target_word_count = int(params.get("target_word_count", 3000) or 3000)
+    analysis_model_cfg = (cfg.get("models") or {}).get("analysis") or {}
+    enable_mcp = bool(cfg.get("enable_mcp", False))
+    allowed_mcp_plugin_ids = cfg.get("mcp_plugin_ids") if enable_mcp else []
 
     tracker = TaskProgressTracker(f"pipeline-{pipeline.id[:8]}", user_id, "流水线章节")
     try:
@@ -682,20 +792,23 @@ async def _generate_one_chapter(
             project_id=pipeline.project_id,
             chapter_id=chapter.id,
             task_trace_id=f"pipeline-{pipeline.id[:8]}",
-            enable_mcp=False,
+            enable_mcp=enable_mcp,
+            allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
         )
-        await _run_chapter_generation_bg(
+        analysis_task = await _run_chapter_generation_bg(
             task_input={
                 "chapter_id": chapter.id,
-                "style_id": None,
+                "style_id": cfg.get("style_id"),
                 "target_word_count": target_word_count,
-                "enable_mcp": False,
+                "enable_mcp": enable_mcp,
                 "model": model,
                 "provider_config_id": provider_config_id,
-                "narrative_perspective": None,
-                "skill_key": None,
+                "narrative_perspective": cfg.get("narrative_perspective"),
+                "skill_key": cfg.get("skill_key"),
                 "temperature": params.get("temperature"),
                 "max_tokens": params.get("max_tokens"),
+                "minimum_content_length": minimum_content_length,
+                "schedule_analysis": False,
             },
             db=db,
             ai_service=ai_service,
@@ -703,10 +816,24 @@ async def _generate_one_chapter(
             user_id=user_id,
             task_id=f"pipeline-{pipeline.id[:8]}",
         )
-        return True, ""
+        if analysis_task is None:
+            return False, "正文已生成，但没有创建正式分析任务", False
+        analysis_ok = await analyze_chapter_background(
+            chapter_id=chapter.id,
+            user_id=user_id,
+            project_id=pipeline.project_id,
+            task_id=analysis_task.id,
+            provider_config_id=analysis_model_cfg.get("provider_config_id"),
+            model=analysis_model_cfg.get("model"),
+            enable_mcp=enable_mcp,
+            allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
+        )
+        if not analysis_ok:
+            return False, "章节分析或状态同步失败，请修复后继续", False
+        return True, "", False
     except Exception as exc:  # noqa: BLE001
         logger.error(f"章节生成失败: {exc}")
-        return False, str(exc)[:1000]
+        return False, str(exc)[:1000], True
 
 
 async def _transition_volume(db: AsyncSession, pipeline: NovelPipeline, user_id: str) -> None:

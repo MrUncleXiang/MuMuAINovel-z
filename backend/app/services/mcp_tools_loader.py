@@ -48,7 +48,7 @@ class MCPToolsLoader:
         if self._initialized:
             return
         
-        # 用户工具缓存: user_id -> UserToolsCache
+        # 工具缓存按用户和允许的插件集合隔离，避免不同项目串用工具。
         self._cache: Dict[str, UserToolsCache] = {}
         
         # 缓存TTL（5分钟）
@@ -91,7 +91,8 @@ class MCPToolsLoader:
         user_id: str,
         db_session: AsyncSession,
         use_cache: bool = True,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        allowed_plugin_ids: Optional[List[str]] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         获取用户的MCP工具列表（OpenAI格式）
@@ -108,24 +109,30 @@ class MCPToolsLoader:
             - List[Dict]: OpenAI Function Calling格式的工具列表
         """
         now = datetime.now()
+        selection_key = ",".join(sorted(allowed_plugin_ids or [])) or "*"
+        cache_key = f"{user_id}:{selection_key}"
         
         # 检查缓存
-        if use_cache and not force_refresh and user_id in self._cache:
-            cache_entry = self._cache[user_id]
+        if use_cache and not force_refresh and cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
             if now < cache_entry.expire_time:
                 cache_entry.hit_count += 1
                 logger.debug(f"🎯 用户工具缓存命中: {user_id} (命中次数: {cache_entry.hit_count})")
                 return cache_entry.tools
             else:
-                del self._cache[user_id]
+                del self._cache[cache_key]
                 logger.debug(f"⏰ 用户工具缓存过期: {user_id}")
         
         # 从数据库加载
         try:
-            tools = await self._load_user_tools(user_id, db_session)
+            tools = await self._load_user_tools(
+                user_id,
+                db_session,
+                allowed_plugin_ids=allowed_plugin_ids,
+            )
             
             # 更新缓存
-            self._cache[user_id] = UserToolsCache(
+            self._cache[cache_key] = UserToolsCache(
                 tools=tools,
                 expire_time=now + self._cache_ttl
             )
@@ -144,7 +151,8 @@ class MCPToolsLoader:
     async def _load_user_tools(
         self,
         user_id: str,
-        db_session: AsyncSession
+        db_session: AsyncSession,
+        allowed_plugin_ids: Optional[List[str]] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         从数据库加载用户启用的MCP插件并获取工具
@@ -155,6 +163,8 @@ class MCPToolsLoader:
             MCPPlugin.enabled == True,
             MCPPlugin.plugin_type.in_(["http", "streamable_http", "sse"])
         ).order_by(MCPPlugin.sort_order)
+        if allowed_plugin_ids is not None:
+            query = query.where(MCPPlugin.id.in_(allowed_plugin_ids))
         
         result = await db_session.execute(query)
         plugins = result.scalars().all()
@@ -203,8 +213,8 @@ class MCPToolsLoader:
             user_id: 用户ID，为None时清空所有缓存
         """
         if user_id:
-            if user_id in self._cache:
-                del self._cache[user_id]
+            for cache_key in [key for key in self._cache if key.startswith(f"{user_id}:")]:
+                del self._cache[cache_key]
                 logger.debug(f"🧹 清理用户工具缓存: {user_id}")
         else:
             count = len(self._cache)

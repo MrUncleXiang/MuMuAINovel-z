@@ -141,6 +141,7 @@ async def create_routed_ai_service(
     chapter_id: Optional[str] = None,
     task_trace_id: Optional[str] = None,
     enable_mcp: bool = True,
+    allowed_mcp_plugin_ids: Optional[list[str]] = None,
 ) -> AIService:
     """解析本次选择并创建带审计上下文的 AIService。"""
     selected = await resolve_ai_selection(
@@ -152,12 +153,13 @@ async def create_routed_ai_service(
     )
     legacy = await db.scalar(select(Settings).where(Settings.user_id == user_id))
     if enable_mcp:
-        enabled_plugin = await db.scalar(
-            select(MCPPlugin.id).where(
+        plugin_query = select(MCPPlugin.id).where(
                 MCPPlugin.user_id == user_id,
                 MCPPlugin.enabled.is_(True),
-            ).limit(1)
-        )
+            )
+        if allowed_mcp_plugin_ids is not None:
+            plugin_query = plugin_query.where(MCPPlugin.id.in_(allowed_mcp_plugin_ids))
+        enabled_plugin = await db.scalar(plugin_query.limit(1))
         enable_mcp = enabled_plugin is not None
 
     return create_user_ai_service_with_mcp(
@@ -178,4 +180,5 @@ async def create_routed_ai_service(
         project_id=project_id,
         chapter_id=chapter_id,
         task_trace_id=task_trace_id,
+        allowed_mcp_plugin_ids=allowed_mcp_plugin_ids,
     )
