@@ -1,6 +1,8 @@
 # Implement：模型选择入口统一
 
 > 前置：`git checkout -b feat/outline-model-selector-unify`（从 main）。完成后 PR 合回。
+>
+> **阻塞记录（2026-08-09）**：步骤 4-5（Chapters.tsx）因工作区存在 MrUncleXiang 未提交的在途改动（章节比较模式每模型单独配 Skill/字数，覆盖同一弹窗区域，见 `backend/app/services/chapter_comparison_service.py` 等 5 文件）而**暂缓**。用户决策：等待其提交后再执行 4-5。步骤 1-3（AIServiceSelector + Outline.tsx）已完成并提交（commit a043a33，已构建部署）。
 
 ## 执行清单（按序）
 
@@ -16,12 +18,12 @@
   - [ ] 3.2 删除 `loadedModels`/`defaultModel` 加载逻辑（约 699-740 行）
   - [ ] 3.3 预填改为：默认服务商（`is_default`）+ 其 `default_model`（当前 = OpenCode Go · deepseek-v4-flash，动态取不硬编码）写入 `initialValues.provider_config_id` + `initialValues.model`
   - [ ] 3.4 确认 `handleGenerate` 提交读取 form 的 `provider_config_id`/`model`
-- [ ] 4. `pages/Chapters.tsx` 单模型弹窗：
+- [ ] 4. `pages/Chapters.tsx` 单模型弹窗（**阻塞中，等 MrUncleXiang WIP 提交后执行**）：
   - [ ] 4.1 删除 3023-3040 行「AI模型」Form.Item
   - [ ] 4.2 确认 `selectedModel` 仅由 AIServiceSelector 派生
   - [ ] 4.3 删除 `availableModels` state 与 `loadAvailableModels`（已核实无其他引用）
   - [ ] 4.4 预填 = 默认服务商 + default_model（同大纲弹窗），删除 `loadAvailableModels` 的预填逻辑（1641-1648 行）
-- [ ] 5. `pages/Chapters.tsx` 批量弹窗：
+- [ ] 5. `pages/Chapters.tsx` 批量弹窗（**阻塞中，同上**）：
   - [ ] 5.1 替换「AI 服务」+「AI模型」裸下拉为 AIServiceSelector
   - [ ] 5.2 删除 `batchSelectedProvider`/`batchProviderModels`/`batchSelectedModel` state 及联动
   - [ ] 5.3 核对所有引用点（grep），提交逻辑改从 selection 取值
