@@ -130,6 +130,14 @@ export default function Outline() {
   const [outlineComparisonBusy, setOutlineComparisonBusy] = useState(false);
   const [outlineDiffVisible, setOutlineDiffVisible] = useState(false);
   const [outlineDiffIds, setOutlineDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
+  // 受控弹窗状态（modal.confirm 内容静态渲染，改用受控 Modal 保证交互与反馈）
+  const [editVisible, setEditVisible] = useState(false);
+  const [editOutlineId, setEditOutlineId] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editAIRunning, setEditAIRunning] = useState(false);
+  const [draftVisible, setDraftVisible] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftAIRunning, setDraftAIRunning] = useState(false);
   const outlineComparisonPollingRef = useRef<number | null>(null);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
   const { token } = theme.useToken();
@@ -272,162 +280,15 @@ export default function Outline() {
 
   if (!currentProject) return null;
 
-  const handleOpenEditModal = (id: string) => {
-    const outline = outlines.find(o => o.id === id);
-    if (outline) {
-      const structureData = outlineStructureMap[outline.id] || {};
-      
-      // 解析角色/组织条目（兼容新旧格式）
-      const editEntries = parseCharacterEntries(structureData.characters);
-      const editCharNames = getCharacterNames(editEntries);
-      const editOrgNames = getOrganizationNames(editEntries);
-      
-      // 处理场景数据 - 可能是字符串数组或对象数组
-      let scenesText = '';
-      if (structureData.scenes) {
-        if (typeof structureData.scenes[0] === 'string') {
-          // 字符串数组格式
-          scenesText = (structureData.scenes as string[]).join('\n');
-        } else {
-          // 对象数组格式
-          scenesText = (structureData.scenes as Array<{location: string; characters: string[]; purpose: string}>)
-            .map(s => `${s.location}|${(s.characters || []).join('、')}|${s.purpose}`)
-            .join('\n');
-        }
-      }
-      
-      // 处理情节要点数据
-      const keyPointsText = structureData.key_points ? structureData.key_points.join('\n') : '';
-      
-      // 设置表单初始值
-      editForm.setFieldsValue({
-        title: outline.title,
-        content: outline.content,
-        characters: editCharNames,
-        organizations: editOrgNames,
-        scenes: scenesText,
-        key_points: keyPointsText,
-        emotion: structureData.emotion || '',
-        goal: structureData.goal || ''
-      });
-      
-      modalApi.confirm({
-        title: '编辑大纲',
-        width: 800,
-        centered: true,
-        styles: {
-          body: {
-            maxHeight: 'calc(100vh - 200px)',
-            overflowY: 'auto'
-          }
-        },
-        content: (
-          <Form
-            form={editForm}
-            layout="vertical"
-            style={{ marginTop: 12 }}
-          >
-            <Form.Item
-              label="标题"
-              name="title"
-              rules={[{ required: true, message: '请输入标题' }]}
-              style={{ marginBottom: 12 }}
-            >
-              <Input placeholder="输入大纲标题" />
-            </Form.Item>
-
-            <Form.Item
-              label="内容"
-              name="content"
-              rules={[{ required: true, message: '请输入内容' }]}
-              style={{ marginBottom: 12 }}
-            >
-              <TextArea rows={4} placeholder="输入大纲内容..." />
-            </Form.Item>
-            
-            <Form.Item
-              label="涉及角色"
-              name="characters"
-              tooltip="从项目角色中选择，也可以手动输入新角色名"
-              style={{ marginBottom: 12 }}
-            >
-              <Select
-                mode="tags"
-                style={{ width: '100%' }}
-                placeholder="选择或输入角色名"
-                options={projectCharacters}
-                tokenSeparators={[',', '，']}
-                maxTagCount="responsive"
-              />
-            </Form.Item>
-            
-            <Form.Item
-              label="涉及组织"
-              name="organizations"
-              tooltip="从项目组织中选择，也可以手动输入新组织名"
-              style={{ marginBottom: 12 }}
-            >
-              <Select
-                mode="tags"
-                style={{ width: '100%' }}
-                placeholder="选择或输入组织/势力名"
-                tokenSeparators={[',', '，']}
-                maxTagCount="responsive"
-              />
-            </Form.Item>
-            
-            <Form.Item
-              label="场景信息"
-              name="scenes"
-              tooltip="支持两种格式：简单描述（每行一个场景）或详细格式（地点|角色|目的）"
-              style={{ marginBottom: 12 }}
-            >
-              <TextArea
-                rows={3}
-                placeholder="每行一个场景&#10;详细格式：地点|角色1、角色2|目的"
-              />
-            </Form.Item>
-            
-            <Form.Item
-              label="情节要点"
-              name="key_points"
-              tooltip="每行一个情节要点"
-              style={{ marginBottom: 12 }}
-            >
-              <TextArea
-                rows={2}
-                placeholder="每行一个情节要点"
-              />
-            </Form.Item>
-            
-            <Form.Item
-              label="情感基调"
-              name="emotion"
-              tooltip="描述本章的情感氛围"
-              style={{ marginBottom: 12 }}
-            >
-              <Input placeholder="例如：冷冽与躁动并存" />
-            </Form.Item>
-            
-            <Form.Item
-              label="叙事目标"
-              name="goal"
-              tooltip="本章要达成的叙事目的"
-              style={{ marginBottom: 0 }}
-            >
-              <Input placeholder="例如：建立世界观对比并完成主角初遇" />
-            </Form.Item>
-
-            <EditOutlineAISection outlineId={outline.id} form={editForm} />
-          </Form>
-        ),
-        okText: '更新',
-        cancelText: '取消',
-        onOk: async () => {
+  // 保存编辑（受控 Modal 的 onOk）
+  const handleEditSaveOutline = async () => {
+    if (!editOutlineId) return;
+    setEditSaving(true);
+    try {
           const values = await editForm.validateFields();
           try {
             // 解析并重构structure数据（使用预解析缓存，避免重复 JSON.parse）
-            const originalStructure = outlineStructureMap[outline.id] || {};
+            const originalStructure = outlineStructureMap[editOutlineId] || {};
             
             // 处理角色和组织数据 - 合并为带类型标识的新格式
             const charNames = Array.isArray(values.characters)
@@ -492,19 +353,129 @@ export default function Outline() {
             };
             
             // 更新大纲
-            await updateOutline(id, {
+            await updateOutline(editOutlineId, {
               title: values.title,
               content: values.content,
               structure: JSON.stringify(newStructure, null, 2)
             });
             
             message.success('大纲更新成功');
+            setEditVisible(false);
           } catch (error) {
             console.error('更新失败:', error);
             message.error('更新失败');
           }
-        },
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // 创建大纲（受控 Modal 的 onOk）
+  const handleDraftSaveOutline = async () => {
+    const nextOrderIndexDraft = outlines.length > 0 ? Math.max(...outlines.map(o => o.order_index)) + 1 : 1;
+    setDraftSaving(true);
+    try {
+        const values = await manualCreateForm.validateFields();
+
+        // 校验序号是否重复
+        const existingOutline = outlines.find(o => o.order_index === values.order_index);
+        if (existingOutline) {
+          modalApi.warning({
+            title: '序号冲突',
+            content: (
+      <div>
+                <p>序号 <strong>{values.order_index}</strong> 已被使用：</p>
+                <div style={{
+                  padding: 12,
+                  background: token.colorWarningBg,
+                  borderRadius: token.borderRadius,
+                  border: `1px solid ${token.colorWarningBorder}`,
+                  marginTop: 8
+                }}>
+                  <div style={{ fontWeight: 500, color: token.colorWarning }}>
+                    {currentProject?.outline_mode === 'one-to-one'
+                      ? `第${existingOutline.order_index}章`
+                      : `第${existingOutline.order_index}卷`
+                    }：{existingOutline.title}
+                  </div>
+                </div>
+                <p style={{ marginTop: 12, color: token.colorTextSecondary }}>
+                  💡 建议使用序号 <strong>{nextOrderIndexDraft}</strong>，或选择其他未使用的序号
+                </p>
+              </div>
+            ),
+            okText: '我知道了',
+            centered: true
+          });
+          throw new Error('序号重复');
+        }
+
+        try {
+          await outlineApi.createOutline({
+            project_id: currentProject.id,
+            ...values
+          });
+          message.success('大纲创建成功');
+          await refreshOutlines();
+          manualCreateForm.resetFields();
+        } catch (error: unknown) {
+          const err = error as Error;
+          if (err.message === '序号重复') {
+            // 序号重复错误已经显示了Modal，不需要再显示message
+            throw error;
+          }
+          message.error('创建失败：' + (err.message || '未知错误'));
+          throw error;
+        }
+    } catch (error) {
+      // 序号冲突等错误已由内部处理/抛出
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  const handleOpenEditModal = (id: string) => {
+    const outline = outlines.find(o => o.id === id);
+    if (outline) {
+      const structureData = outlineStructureMap[outline.id] || {};
+      
+      // 解析角色/组织条目（兼容新旧格式）
+      const editEntries = parseCharacterEntries(structureData.characters);
+      const editCharNames = getCharacterNames(editEntries);
+      const editOrgNames = getOrganizationNames(editEntries);
+      
+      // 处理场景数据 - 可能是字符串数组或对象数组
+      let scenesText = '';
+      if (structureData.scenes) {
+        if (typeof structureData.scenes[0] === 'string') {
+          // 字符串数组格式
+          scenesText = (structureData.scenes as string[]).join('\n');
+        } else {
+          // 对象数组格式
+          scenesText = (structureData.scenes as Array<{location: string; characters: string[]; purpose: string}>)
+            .map(s => `${s.location}|${(s.characters || []).join('、')}|${s.purpose}`)
+            .join('\n');
+        }
+      }
+      
+      // 处理情节要点数据
+      const keyPointsText = structureData.key_points ? structureData.key_points.join('\n') : '';
+      
+      // 设置表单初始值
+      editForm.setFieldsValue({
+        title: outline.title,
+        content: outline.content,
+        characters: editCharNames,
+        organizations: editOrgNames,
+        scenes: scenesText,
+        key_points: keyPointsText,
+        emotion: structureData.emotion || '',
+        goal: structureData.goal || ''
       });
+      
+      // 打开受控编辑弹窗
+      setEditOutlineId(id);
+      setEditVisible(true);
     }
   };
 
@@ -893,105 +864,8 @@ export default function Outline() {
     // 打开弹窗时预填序号（AI 起草子组件每次挂载会重置自身状态）
     manualCreateForm.setFieldsValue({ order_index: nextOrderIndex });
 
-    modalApi.confirm({
-      title: '手动创建大纲',
-      width: 600,
-      centered: true,
-      content: (
-        <Form
-          form={manualCreateForm}
-          layout="vertical"
-          initialValues={{ order_index: nextOrderIndex }}
-          style={{ marginTop: 16 }}
-        >
-          <Form.Item
-            label="大纲序号"
-            name="order_index"
-            rules={[{ required: true, message: '请输入序号' }]}
-            tooltip={currentProject?.outline_mode === 'one-to-one' ? '在传统模式下，序号即章节编号' : '在细化模式下，序号为卷数'}
-          >
-            <InputNumber min={1} style={{ width: '100%' }} placeholder="自动计算的下一个序号" />
-          </Form.Item>
-
-          <Form.Item
-            label="大纲标题"
-            name="title"
-            rules={[{ required: true, message: '请输入标题' }]}
-          >
-            <Input placeholder={currentProject?.outline_mode === 'one-to-one' ? '例如：第一章 初入江湖' : '例如：第一卷 初入江湖'} />
-          </Form.Item>
-
-          <Form.Item
-            label="大纲内容"
-            name="content"
-            rules={[{ required: true, message: '请输入内容' }]}
-          >
-            <TextArea
-              rows={6}
-              placeholder="描述本章/卷的主要情节和发展方向..."
-            />
-          </Form.Item>
-
-          <DraftOutlineAISection form={manualCreateForm} projectId={currentProject.id} />
-        </Form>
-      ),
-      okText: '创建',
-      cancelText: '取消',
-      onOk: async () => {
-        const values = await manualCreateForm.validateFields();
-
-        // 校验序号是否重复
-        const existingOutline = outlines.find(o => o.order_index === values.order_index);
-        if (existingOutline) {
-          modalApi.warning({
-            title: '序号冲突',
-            content: (
-      <div>
-                <p>序号 <strong>{values.order_index}</strong> 已被使用：</p>
-                <div style={{
-                  padding: 12,
-                  background: token.colorWarningBg,
-                  borderRadius: token.borderRadius,
-                  border: `1px solid ${token.colorWarningBorder}`,
-                  marginTop: 8
-                }}>
-                  <div style={{ fontWeight: 500, color: token.colorWarning }}>
-                    {currentProject?.outline_mode === 'one-to-one'
-                      ? `第${existingOutline.order_index}章`
-                      : `第${existingOutline.order_index}卷`
-                    }：{existingOutline.title}
-                  </div>
-                </div>
-                <p style={{ marginTop: 12, color: token.colorTextSecondary }}>
-                  💡 建议使用序号 <strong>{nextOrderIndex}</strong>，或选择其他未使用的序号
-                </p>
-              </div>
-            ),
-            okText: '我知道了',
-            centered: true
-          });
-          throw new Error('序号重复');
-        }
-
-        try {
-          await outlineApi.createOutline({
-            project_id: currentProject.id,
-            ...values
-          });
-          message.success('大纲创建成功');
-          await refreshOutlines();
-          manualCreateForm.resetFields();
-        } catch (error: unknown) {
-          const err = error as Error;
-          if (err.message === '序号重复') {
-            // 序号重复错误已经显示了Modal，不需要再显示message
-            throw error;
-          }
-          message.error('创建失败：' + (err.message || '未知错误'));
-          throw error;
-        }
-      }
-    });
+    // 打开受控创建弹窗
+    setDraftVisible(true);
   };
 
   // 展开单个大纲为多章 - 提交后台任务并在悬浮任务面板显示进度
@@ -2492,6 +2366,180 @@ export default function Outline() {
         onSelectionChange={(left, right) => setOutlineDiffIds([left, right])}
         onClose={() => setOutlineDiffVisible(false)}
       />
+
+      <Modal
+        title="编辑大纲"
+        open={editVisible}
+        width={800}
+        centered
+        onOk={handleEditSaveOutline}
+        okText="更新"
+        cancelText="取消"
+        confirmLoading={editSaving}
+        okButtonProps={{ disabled: editAIRunning }}
+        onCancel={() => {
+          if (editAIRunning) {
+            modalApi.confirm({ title: 'AI 润色进行中', content: '润色尚未完成，确定放弃本次润色并关闭弹窗吗？', okText: '放弃并关闭', cancelText: '继续等待', onOk: () => setEditVisible(false) });
+          } else {
+            setEditVisible(false);
+          }
+        }}
+        styles={{ body: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' } }}
+      >
+          <Form
+            form={editForm}
+            layout="vertical"
+            style={{ marginTop: 12 }}
+          >
+            <Form.Item
+              label="标题"
+              name="title"
+              rules={[{ required: true, message: '请输入标题' }]}
+              style={{ marginBottom: 12 }}
+            >
+              <Input placeholder="输入大纲标题" />
+            </Form.Item>
+
+            <Form.Item
+              label="内容"
+              name="content"
+              rules={[{ required: true, message: '请输入内容' }]}
+              style={{ marginBottom: 12 }}
+            >
+              <TextArea rows={4} placeholder="输入大纲内容..." />
+            </Form.Item>
+            
+            <Form.Item
+              label="涉及角色"
+              name="characters"
+              tooltip="从项目角色中选择，也可以手动输入新角色名"
+              style={{ marginBottom: 12 }}
+            >
+              <Select
+                mode="tags"
+                style={{ width: '100%' }}
+                placeholder="选择或输入角色名"
+                options={projectCharacters}
+                tokenSeparators={[',', '，']}
+                maxTagCount="responsive"
+              />
+            </Form.Item>
+            
+            <Form.Item
+              label="涉及组织"
+              name="organizations"
+              tooltip="从项目组织中选择，也可以手动输入新组织名"
+              style={{ marginBottom: 12 }}
+            >
+              <Select
+                mode="tags"
+                style={{ width: '100%' }}
+                placeholder="选择或输入组织/势力名"
+                tokenSeparators={[',', '，']}
+                maxTagCount="responsive"
+              />
+            </Form.Item>
+            
+            <Form.Item
+              label="场景信息"
+              name="scenes"
+              tooltip="支持两种格式：简单描述（每行一个场景）或详细格式（地点|角色|目的）"
+              style={{ marginBottom: 12 }}
+            >
+              <TextArea
+                rows={3}
+                placeholder="每行一个场景&#10;详细格式：地点|角色1、角色2|目的"
+              />
+            </Form.Item>
+            
+            <Form.Item
+              label="情节要点"
+              name="key_points"
+              tooltip="每行一个情节要点"
+              style={{ marginBottom: 12 }}
+            >
+              <TextArea
+                rows={2}
+                placeholder="每行一个情节要点"
+              />
+            </Form.Item>
+            
+            <Form.Item
+              label="情感基调"
+              name="emotion"
+              tooltip="描述本章的情感氛围"
+              style={{ marginBottom: 12 }}
+            >
+              <Input placeholder="例如：冷冽与躁动并存" />
+            </Form.Item>
+            
+            <Form.Item
+              label="叙事目标"
+              name="goal"
+              tooltip="本章要达成的叙事目的"
+              style={{ marginBottom: 0 }}
+            >
+              <Input placeholder="例如：建立世界观对比并完成主角初遇" />
+            </Form.Item>
+
+            <EditOutlineAISection outlineId={editOutlineId ?? ''} form={editForm} onRunningChange={setEditAIRunning} />
+          </Form>
+      </Modal>
+
+      <Modal
+        title="手动创建大纲"
+        open={draftVisible}
+        width={600}
+        centered
+        onOk={handleDraftSaveOutline}
+        okText="创建"
+        cancelText="取消"
+        confirmLoading={draftSaving}
+        okButtonProps={{ disabled: draftAIRunning }}
+        onCancel={() => {
+          if (draftAIRunning) {
+            modalApi.confirm({ title: 'AI 起草进行中', content: '起草尚未完成，确定放弃并关闭弹窗吗？', okText: '放弃并关闭', cancelText: '继续等待', onOk: () => setDraftVisible(false) });
+          } else {
+            setDraftVisible(false);
+          }
+        }}
+      >
+        <Form
+          form={manualCreateForm}
+          layout="vertical"
+          style={{ marginTop: 16 }}
+        >
+          <Form.Item
+            label="大纲序号"
+            name="order_index"
+            rules={[{ required: true, message: '请输入序号' }]}
+            tooltip={currentProject?.outline_mode === 'one-to-one' ? '在传统模式下，序号即章节编号' : '在细化模式下，序号为卷数'}
+          >
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="自动计算的下一个序号" />
+          </Form.Item>
+
+          <Form.Item
+            label="大纲标题"
+            name="title"
+            rules={[{ required: true, message: '请输入标题' }]}
+          >
+            <Input placeholder={currentProject?.outline_mode === 'one-to-one' ? '例如：第一章 初入江湖' : '例如：第一卷 初入江湖'} />
+          </Form.Item>
+
+          <Form.Item
+            label="大纲内容"
+            name="content"
+            rules={[{ required: true, message: '请输入内容' }]}
+          >
+            <TextArea
+              rows={6}
+              placeholder="描述本章/卷的主要情节和发展方向..."
+            />
+          </Form.Item>
+
+          <DraftOutlineAISection form={manualCreateForm} projectId={currentProject.id} onRunningChange={setDraftAIRunning} />
+        </Form>
+      </Modal>
     </>
   );
 }
@@ -2503,7 +2551,7 @@ export default function Outline() {
 // 因此 AI 交互（输入/loading/请求/回填）全部封装在子组件内。
 // ============================================================
 
-function EditOutlineAISection({ outlineId, form }: { outlineId: string; form: FormInstance }) {
+function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId: string; form: FormInstance; onRunningChange?: (running: boolean) => void }) {
   const [instruction, setInstruction] = useState('');
   const [skillKey, setSkillKey] = useState<string | undefined>();
   const [selection, setSelection] = useState<AIServiceSelection | undefined>();
@@ -2511,6 +2559,7 @@ function EditOutlineAISection({ outlineId, form }: { outlineId: string; form: Fo
 
   const handleEdit = async () => {
     setLoading(true);
+    onRunningChange?.(true);
     try {
       const res = await outlineApi.aiEdit(outlineId, {
         instruction: instruction.trim() || undefined,
@@ -2525,6 +2574,7 @@ function EditOutlineAISection({ outlineId, form }: { outlineId: string; form: Fo
       message.error(apiError.response?.data?.detail || 'AI 润色失败');
     } finally {
       setLoading(false);
+      onRunningChange?.(false);
     }
   };
 
@@ -2542,21 +2592,25 @@ function EditOutlineAISection({ outlineId, form }: { outlineId: string; form: Fo
         <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
       </Form.Item>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
-      <Button
-        type="primary"
-        ghost
-        icon={<ThunderboltOutlined />}
-        loading={loading}
-        onClick={handleEdit}
-        style={{ marginTop: 4 }}
-      >
-        AI 润色
-      </Button>
+      <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
+        {loading && (
+          <Alert type="info" showIcon message="正在调用 AI 润色（通常需要 1-2 分钟），期间请勿关闭弹窗或点击更新" />
+        )}
+        <Button
+          type="primary"
+          ghost
+          icon={<ThunderboltOutlined />}
+          loading={loading}
+          onClick={handleEdit}
+        >
+          AI 润色
+        </Button>
+      </Space>
     </>
   );
 }
 
-function DraftOutlineAISection({ form, projectId }: { form: FormInstance; projectId: string }) {
+function DraftOutlineAISection({ form, projectId, onRunningChange }: { form: FormInstance; projectId: string; onRunningChange?: (running: boolean) => void }) {
   const [instruction, setInstruction] = useState('');
   const [skillKey, setSkillKey] = useState<string | undefined>();
   const [selection, setSelection] = useState<AIServiceSelection | undefined>();
@@ -2564,6 +2618,7 @@ function DraftOutlineAISection({ form, projectId }: { form: FormInstance; projec
 
   const handleDraft = async () => {
     setLoading(true);
+    onRunningChange?.(true);
     try {
       const values = form.getFieldsValue();
       const res = await outlineApi.aiDraft({
@@ -2581,6 +2636,7 @@ function DraftOutlineAISection({ form, projectId }: { form: FormInstance; projec
       message.error(apiError.response?.data?.detail || 'AI 起草失败');
     } finally {
       setLoading(false);
+      onRunningChange?.(false);
     }
   };
 
@@ -2598,16 +2654,20 @@ function DraftOutlineAISection({ form, projectId }: { form: FormInstance; projec
         <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
       </Form.Item>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
-      <Button
-        type="primary"
-        ghost
-        icon={<ThunderboltOutlined />}
-        loading={loading}
-        onClick={handleDraft}
-        style={{ marginTop: 4 }}
-      >
-        AI 起草
-      </Button>
+      <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
+        {loading && (
+          <Alert type="info" showIcon message="正在调用 AI 起草（通常需要 1-2 分钟），期间请勿关闭弹窗或点击创建" />
+        )}
+        <Button
+          type="primary"
+          ghost
+          icon={<ThunderboltOutlined />}
+          loading={loading}
+          onClick={handleDraft}
+        >
+          AI 起草
+        </Button>
+      </Space>
     </>
   );
 }
