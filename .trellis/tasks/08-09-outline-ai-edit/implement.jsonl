@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "backend/app/api/outlines.py", "reason": "新增ai-edit/ai-draft端点；复用_build_outline_continue_context上下文构造"}
+{"file": "backend/app/services/prompt_service.py", "reason": "新增OUTLINE_AI_EDIT/OUTLINE_AI_DRAFT模板并注册"}
+{"file": "frontend/src/pages/Outline.tsx", "reason": "编辑弹窗313行起/手动创建弹窗：加AI润色与AI起草区块"}

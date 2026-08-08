@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "frontend/src/components/AIServiceSelector.tsx", "reason": "待增强组件：未选服务商时模型列表为空，需显示默认服务商模型"}
+{"file": "frontend/src/pages/Outline.tsx", "reason": "877-898行重复AI模型下拉待删除；699-740行loadedModels加载逻辑待清理"}
+{"file": "frontend/src/pages/Chapters.tsx", "reason": "3023-3040单模型弹窗重复下拉；3326-3410批量弹窗裸两级选择待替换为AIServiceSelector"}

@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "backend/app/services/skill_loader.py", "reason": "新增build_skill_system_prompt公共函数；get_all_skills_cached现有缓存机制"}
+{"file": "backend/app/api/outlines.py", "reason": "四条生成函数（SSE两条+后台两条）注入点；generate_text_stream调用签名"}
+{"file": "backend/app/services/outline_comparison_service.py", "reason": "多模型比较候选生成注入点（payload.skill_key）"}
+{"file": "backend/app/api/chapters.py", "reason": "1440-1463现有Skill注入实现，改为调用公共函数"}

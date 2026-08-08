@@ -22,6 +22,9 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [resolved, setResolved] = useState<{ provider_name: string; model: string }>();
   const selected = providers.find(item => item.id === value?.provider_config_id);
+  // 默认服务商（未指定时展示其模型列表；无 is_default 时兑底到第一个启用的）
+  const defaultProvider = providers.find(item => item.is_default) ?? providers[0];
+  const sourceProvider = selected ?? defaultProvider;
 
   useEffect(() => {
     aiProviderApi.list().then(items => setProviders(items.filter(item => item.enabled))).catch(() => setProviders([]));
@@ -32,10 +35,10 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
   }, [usageType, value?.provider_config_id, value?.model]);
 
   const modelOptions = useMemo(() => {
-    if (!selected) return [];
-    return Array.from(new Set([selected.default_model, ...(selected.models || [])].filter(Boolean)))
+    if (!sourceProvider) return [];
+    return Array.from(new Set([sourceProvider.default_model, ...(sourceProvider.models || [])].filter(Boolean)))
       .map(model => ({ label: model as string, value: model as string }));
-  }, [selected]);
+  }, [sourceProvider]);
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="small">
@@ -47,7 +50,7 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
           placeholder="不指定，使用该任务的默认配置"
           options={providers.map(item => ({
             value: item.id,
-            label: `${item.name}${item.default_model ? ` · ${item.default_model}` : ''}`,
+            label: `${item.name}${item.is_default ? '（默认）' : ''}${item.default_model ? ` · ${item.default_model}` : ''}`,
           }))}
           onChange={provider_config_id => onChange?.({ provider_config_id, model: undefined })}
         />
@@ -58,9 +61,9 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
           showSearch
           disabled={disabled}
           value={value?.model}
-          placeholder="不指定，使用服务默认模型"
+          placeholder={sourceProvider ? `默认服务商: ${sourceProvider.name}` : "不指定，使用服务默认模型"}
           options={modelOptions}
-          onChange={model => onChange?.({ ...value, model })}
+          onChange={model => onChange?.({ ...value, provider_config_id: value?.provider_config_id ?? defaultProvider?.id, model })}
         />
       </Form.Item>
       {resolved && (

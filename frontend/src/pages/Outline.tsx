@@ -6,7 +6,7 @@ import { eventBus } from '../store/eventBus';
 import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
-import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi } from '../services/api';
+import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import AIServiceSelector from '../components/AIServiceSelector';
 import LLMMultiSelector from '../components/LLMMultiSelector';
@@ -691,29 +691,16 @@ export default function Outline() {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
 
-    // 直接加载可用模型列表
-    const settingsResponse = await fetch('/api/settings');
-    const settings = await settingsResponse.json();
-    const { api_key, api_base_url, api_provider } = settings;
-
-    let loadedModels: Array<{ value: string, label: string }> = [];
-    let defaultModel: string | undefined = undefined;
-
-    if (api_base_url) {
-      try {
-        const modelsResponse = await fetch(
-          `/api/settings/models?api_key=${encodeURIComponent(api_key || '')}&api_base_url=${encodeURIComponent(api_base_url)}&provider=${api_provider}`
-        );
-        if (modelsResponse.ok) {
-          const data = await modelsResponse.json();
-          if (data.models && data.models.length > 0) {
-            loadedModels = data.models;
-            defaultModel = settings.llm_model;
-          }
-        }
-      } catch {
-        console.log('获取模型列表失败，将使用默认模型');
+    // 预填默认服务商及其默认模型（当前 = OpenCode Go · deepseek-v4-flash），动态获取不硬编码
+    let defaultSelection: { provider_config_id?: string; model?: string } = {};
+    try {
+      const providers = await aiProviderApi.list();
+      const defaultProvider = providers.find(p => p.enabled && p.is_default) ?? providers.find(p => p.enabled);
+      if (defaultProvider?.default_model) {
+        defaultSelection = { provider_config_id: defaultProvider.id, model: defaultProvider.default_model };
       }
+    } catch {
+      console.log('获取默认AI服务失败，将使用默认路由');
     }
 
     modalApi.confirm({
@@ -737,7 +724,7 @@ export default function Outline() {
             plot_stage: 'development',
             keep_existing: true,
             theme: currentProject.theme || '',
-            model: defaultModel,
+            ...defaultSelection,
           }}
         >
           <Form.Item label="生成方式">
@@ -873,30 +860,6 @@ export default function Outline() {
             )}
           </Form.Item> : (
             <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
-          )}
-          {outlineGenerationMode === 'single' && loadedModels.length > 0 && (
-            <Form.Item
-              label="AI模型"
-              name="model"
-              tooltip="选择用于生成的AI模型，不选则使用系统默认模型"
-            >
-              <Select
-                placeholder={defaultModel ? `默认: ${loadedModels.find(m => m.value === defaultModel)?.label || defaultModel}` : "使用默认模型"}
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                options={loadedModels}
-                onChange={(value) => {
-                  console.log('用户在下拉框中选择了模型:', value);
-                  // 手动同步到Form
-                  generateForm.setFieldsValue({ model: value });
-                  console.log('已同步到Form，当前Form值:', generateForm.getFieldsValue());
-                }}
-              />
-              <div style={{ color: token.colorTextTertiary, fontSize: 12, marginTop: 4 }}>
-                {defaultModel ? `当前默认模型: ${loadedModels.find(m => m.value === defaultModel)?.label || defaultModel}` : '未配置默认模型'}
-              </div>
-            </Form.Item>
           )}
         </Form>
       ),
