@@ -123,7 +123,6 @@ export default function Outline() {
   const [manualCreateForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
-  const [outlineGenerationMode, setOutlineGenerationMode] = useState<'single' | 'compare'>('single');
   const [outlineComparisonSelections, setOutlineComparisonSelections] = useState<LLMComparisonSelection[]>([]);
   // AI 润色（编辑弹窗）/ AI 起草（创建弹窗）loading 状态
   // （输入值全部走 Form 字段管理，modal.confirm 内容不随 state 重渲染，不能用受控 state）
@@ -779,7 +778,7 @@ export default function Outline() {
   const showGenerateModal = async () => {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
-    generateForm.setFieldsValue({ skill_key: undefined });
+    generateForm.setFieldsValue({ skill_key: undefined, generation_mode: 'single' });
 
     // 预填默认服务商及其默认模型（当前 = OpenCode Go · deepseek-v4-flash），动态获取不硬编码
     let defaultSelection: { provider_config_id?: string; model?: string } = {};
@@ -809,6 +808,7 @@ export default function Outline() {
           style={{ marginTop: 16 }}
           initialValues={{
             mode: initialMode,
+            generation_mode: 'single',
             chapter_count: 5,
             narrative_perspective: currentProject.narrative_perspective || '第三人称',
             plot_stage: 'development',
@@ -817,15 +817,13 @@ export default function Outline() {
             ...defaultSelection,
           }}
         >
-          <Form.Item label="生成方式">
+          <Form.Item label="生成方式" name="generation_mode" style={{ marginBottom: 8 }}>
             <Segmented
               block
-              value={outlineGenerationMode}
               options={[
                 { label: '单模型直接生成', value: 'single' },
                 { label: '多模型比较（推荐）', value: 'compare' },
               ]}
-              onChange={value => setOutlineGenerationMode(value as 'single' | 'compare')}
             />
           </Form.Item>
           <Form.Item label="应用 Skill" name="skill_key" style={{ marginBottom: 8 }}>
@@ -942,25 +940,27 @@ export default function Outline() {
             }}
           </Form.Item>
 
-          {/* 自定义模型选择 - 移到外层，所有模式都显示 */}
-          {outlineGenerationMode === 'single' ? <Form.Item noStyle shouldUpdate>
+          {/* 模型选择：单模型（AIServiceSelector）/ 多模型比较（LLMMultiSelector），由 Form 的 generation_mode 驱动 */}
+          <Form.Item noStyle shouldUpdate>
             {({ getFieldValue, setFieldsValue }) => (
-              <AIServiceSelector
-                usageType="outline"
-                value={{ provider_config_id: getFieldValue('provider_config_id'), model: getFieldValue('model') }}
-                onChange={(selection) => setFieldsValue(selection)}
-              />
+              getFieldValue('generation_mode') === 'compare' ? (
+                <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
+              ) : (
+                <AIServiceSelector
+                  usageType="outline"
+                  value={{ provider_config_id: getFieldValue('provider_config_id'), model: getFieldValue('model') }}
+                  onChange={(selection) => setFieldsValue(selection)}
+                />
+              )
             )}
-          </Form.Item> : (
-            <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
-          )}
+          </Form.Item>
         </Form>
       ),
       okText: hasOutlines ? '开始续写' : '开始生成',
       cancelText: '取消',
       onOk: async () => {
         const values = await generateForm.validateFields();
-        if (outlineGenerationMode === 'compare') await handleGenerateComparison(values);
+        if (values.generation_mode === 'compare') await handleGenerateComparison(values);
         else await handleGenerate(values);
       },
     });
