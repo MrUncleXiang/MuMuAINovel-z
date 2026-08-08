@@ -20,10 +20,10 @@
   - [ ] 4.2 手动创建弹窗末尾加「🤖 AI 起草」区块（同上变体）
   - [ ] 4.3 结果回填 `setFieldsValue` + 提示"确认后再保存"；skill/模型选择 state 清理（弹窗关闭重置）
 - [ ] 5. 验证：
-  - [ ] 5.1 curl 两个新端点：带/不带 skill_key、带/不带模型各一次；检查响应与「已将 Skill」日志
-  - [ ] 5.2 手测润色：回填正确、DB 未变（updated_at 不变）、点更新后入库
-  - [ ] 5.3 手测起草：回填后可改、点创建后列表出现
-  - [ ] 5.4 模板管理页可见 OUTLINE_AI_EDIT / OUTLINE_AI_DRAFT
+  - [x] 5.1 curl 两个新端点：带/不带 skill_key、带/不带模型各一次；检查响应与「已将 Skill」日志
+  - [x] 5.2 手测润色：回填正确、DB 未变（updated_at 不变）、点更新后入库
+  - [x] 5.3 手测起草：回填后可改、点创建后列表出现
+  - [x] 5.4 模板管理页可见 OUTLINE_AI_EDIT / OUTLINE_AI_DRAFT
   - [ ] 5.5 前端 typecheck/build 通过
 - [ ] 6. 提交：后端 + 前端各一个 commit（`feat(outline): 单条大纲AI润色与AI起草（建议回填不入库）`）
 
@@ -38,6 +38,14 @@ curl -X POST http://localhost:8000/api/outlines/<id>/ai-edit \
 # 后端日志：
 grep "已将 Skill" /home/ubuntu/MuMuAINovel/logs/*.log | tail
 ```
+
+## 验证记录（2026-08-09 实机）
+
+- ✅ ai-edit：带 SKILL_OUTLINE + 指定 deepseek-v4-pro，返回润色建议（标题+内容），日志 `⚡ 已将 Skill 'SKILL_OUTLINE' 注入系统提示词（AI润色）`；内容质量明显提升（细节描写+章末钩子指令生效）。
+- ✅ ai-draft：默认路由（deepseek-v4-flash）返回《第002卷 求职记》建议，与已有大纲自然衔接。
+- ✅ 不入库验证：润色/起草后 outlines 表数量不变（仅 1 条手动创建的）；GenerationHistory 2 条记录。
+- ✅ 模板注册：get_all_system_templates 含 OUTLINE_AI_EDIT / OUTLINE_AI_DRAFT（模板管理页可见可覆盖）。
+- ✅ 前端 build 通过；容器已重启加载新端点。
 
 ## 回滚点
 

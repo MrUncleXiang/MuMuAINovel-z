@@ -97,6 +97,37 @@ class OutlineListResponse(BaseModel):
     items: list[OutlineResponse]
 
 
+class OutlineAIEditRequest(BaseModel):
+    """单条大纲 AI 润色请求模型（结果不入库，仅返回建议）"""
+    instruction: Optional[str] = Field(None, description="润色方向，如：加强章末钩子、压缩篇幅、更强调冲突")
+    skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导润色")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class OutlineAIEditResponse(BaseModel):
+    """单条大纲 AI 润色响应模型（建议值，不入库）"""
+    title: str = Field(..., description="建议标题")
+    content: str = Field(..., description="建议内容")
+
+
+class OutlineAIDraftRequest(BaseModel):
+    """单条大纲 AI 起草请求模型（结果不入库，仅返回建议）"""
+    project_id: str = Field(..., description="项目ID")
+    order_index: Optional[int] = Field(None, description="建议插入序号（默认 max+1）", ge=1)
+    instruction: Optional[str] = Field(None, description="起草要求，如：写一卷关于主角复仇的过渡卷")
+    skill_key: Optional[str] = Field(None, description="Skill 标识")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class OutlineAIDraftResponse(BaseModel):
+    """单条大纲 AI 起草响应模型（建议值，不入库）"""
+    order_index: int = Field(..., description="建议插入序号")
+    title: str = Field(..., description="建议标题")
+    content: str = Field(..., description="建议内容")
+
+
 class ChapterPlanItem(BaseModel):
     """单个章节规划项"""
     sub_index: int = Field(..., description="子章节序号", ge=1)

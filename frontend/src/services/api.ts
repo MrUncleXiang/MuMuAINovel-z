@@ -644,6 +644,12 @@ export const outlineApi = {
   createComparison: (data: GenerateOutlineRequest & { selections: import('../types').LLMComparisonSelection[] }) =>
     api.post<unknown, import('../types').LLMComparisonBatch>('/outlines/comparison-batches', data),
 
+  aiEdit: (outlineId: string, data: { instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
+    api.post<unknown, { title: string; content: string }>(`/outlines/${outlineId}/ai-edit`, data),
+
+  aiDraft: (data: { project_id: string; order_index?: number; instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
+    api.post<unknown, { order_index: number; title: string; content: string }>('/outlines/ai-draft', data),
+
   retryComparisonCandidate: (batchId: string, candidateId: string) =>
     api.post<unknown, import('../types').LLMComparisonCandidate>(`/outlines/comparison-batches/${batchId}/retry/${candidateId}`),
 

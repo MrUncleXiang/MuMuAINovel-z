@@ -21,6 +21,10 @@ from app.schemas.outline import (
     OutlineListResponse,
     OutlineGenerateRequest,
     OutlineComparisonCreateRequest,
+    OutlineAIEditRequest,
+    OutlineAIEditResponse,
+    OutlineAIDraftRequest,
+    OutlineAIDraftResponse,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -1847,6 +1851,178 @@ async def continue_outline_generator(
             await db.rollback()
             logger.info("大纲续写事务已回滚（异常）")
         yield await tracker.error(f"续写失败: {str(e)}")
+
+
+def _build_neighbors_text(outlines: List[Outline], around_order: int, count: int = 2) -> str:
+    """构造相邻大纲文本（编辑/插入位置前后各 count 条，不含自身位置）"""
+    lines = []
+    for o in outlines:
+        if o.order_index != around_order and abs(o.order_index - around_order) <= count:
+            lines.append(f"第{o.order_index}条《{o.title}》：{(o.content or '')[:150]}")
+    return "\n".join(lines) or "（无相邻大纲）"
+
+
+def _parse_ai_edit_response(raw: str) -> dict:
+    """解析 AI 润色/起草响应：JSON 优先，兜底启发式"""
+    raw = raw.strip()
+    if not raw:
+        raise ValueError("AI 返回内容为空")
+    # 尝试直接解析或从文本中提取 JSON 块
+    candidates = [raw]
+    start, end = raw.find('{'), raw.rfind('}')
+    if start >= 0 and end > start:
+        candidates.insert(0, raw[start:end + 1])
+    for text in candidates:
+        try:
+            data = loads_json(text)
+            if isinstance(data, dict):
+                title = str(data.get("title") or "").strip()
+                content = str(data.get("content") or data.get("summary") or "").strip()
+                if title and content:
+                    return {"title": title, "content": content, "changes": data.get("changes")}
+        except Exception:
+            continue
+    # 兜底：首行作为标题，其余作为内容
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lines) >= 2:
+        return {"title": lines[0], "content": "\n".join(lines[1:])}
+    raise ValueError("无法从 AI 响应中解析出标题与内容")
+
+
+@router.post("/ai-draft", response_model=OutlineAIDraftResponse, summary="单条大纲AI起草（建议不入库）")
+async def outline_ai_draft(
+    payload: OutlineAIDraftRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """AI 起草一条大纲建议（不写入数据库，由前端回填表单待用户确认）"""
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(payload.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == payload.project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == payload.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(select(Character).where(Character.project_id == payload.project_id))).all())
+
+    order_index = payload.order_index or (max((o.order_index for o in outlines), default=0) + 1)
+    template = await PromptService.get_template("OUTLINE_AI_DRAFT", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title,
+        theme=project.theme or "未设定",
+        genre=project.genre or "通用",
+        narrative_perspective=project.narrative_perspective or "第三人称",
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        characters_info=_build_characters_info(characters) or "暂无角色信息",
+        order_index=order_index,
+        neighbors=_build_neighbors_text(outlines, order_index),
+        instruction=payload.instruction or "自然衔接已有大纲，写出新的一条",
+    )
+    system_prompt = build_skill_system_prompt(payload.skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（AI起草）")
+
+    from app.services.ai_provider_service import create_routed_ai_service
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="outline",
+        provider_config_id=payload.provider_config_id, model=payload.model,
+        project_id=payload.project_id,
+    )
+    result = await service.generate_text(prompt=prompt, system_prompt=system_prompt, auto_mcp=False)
+    raw = str(result.get("content") or "").strip()
+
+    try:
+        parsed = _parse_ai_edit_response(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"AI 响应解析失败：{e}。原始内容：{raw[:500]}")
+
+    # 记录生成历史（不入库大纲，仅记录 AI 调用）
+    db.add(GenerationHistory(
+        project_id=payload.project_id,
+        prompt=prompt,
+        generated_content=raw,
+        model=payload.model or "default",
+    ))
+    await db.commit()
+
+    return OutlineAIDraftResponse(order_index=order_index, title=parsed["title"], content=parsed["content"])
+
+
+@router.post("/{outline_id}/ai-edit", response_model=OutlineAIEditResponse, summary="单条大纲AI润色（建议不入库）")
+async def outline_ai_edit(
+    outline_id: str,
+    payload: OutlineAIEditRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """AI 润色单条大纲（不写入数据库，由前端回填表单待用户确认）"""
+    user_id = getattr(request.state, 'user_id', None)
+    result = await db.execute(select(Outline).where(Outline.id == outline_id))
+    outline = result.scalar_one_or_none()
+    if not outline:
+        raise HTTPException(status_code=404, detail="大纲不存在")
+    await verify_project_access(outline.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == outline.project_id))
+    project = project_result.scalar_one_or_none()
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == outline.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(select(Character).where(Character.project_id == outline.project_id))).all())
+
+    template = await PromptService.get_template("OUTLINE_AI_EDIT", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title if project else "未命名",
+        theme=(project.theme if project else None) or "未设定",
+        genre=(project.genre if project else None) or "通用",
+        narrative_perspective=(project.narrative_perspective if project else None) or "第三人称",
+        time_period=(project.world_time_period if project else None) or "未设定",
+        location=(project.world_location if project else None) or "未设定",
+        atmosphere=(project.world_atmosphere if project else None) or "未设定",
+        rules=(project.world_rules if project else None) or "未设定",
+        characters_info=_build_characters_info(characters) or "暂无角色信息",
+        order_index=outline.order_index,
+        current_title=outline.title,
+        current_content=outline.content or "",
+        neighbors=_build_neighbors_text(outlines, outline.order_index),
+        instruction=payload.instruction or "提升大纲质量：更具体的冲突、更清晰的节奏、更抓人的标题",
+    )
+    system_prompt = build_skill_system_prompt(payload.skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（AI润色）")
+
+    from app.services.ai_provider_service import create_routed_ai_service
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="outline",
+        provider_config_id=payload.provider_config_id, model=payload.model,
+        project_id=outline.project_id,
+    )
+    result = await service.generate_text(prompt=prompt, system_prompt=system_prompt, auto_mcp=False)
+    raw = str(result.get("content") or "").strip()
+
+    try:
+        parsed = _parse_ai_edit_response(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"AI 响应解析失败：{e}。原始内容：{raw[:500]}")
+
+    db.add(GenerationHistory(
+        project_id=outline.project_id,
+        prompt=prompt,
+        generated_content=raw,
+        model=payload.model or "default",
+    ))
+    await db.commit()
+
+    return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"])
 
 
 @router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")

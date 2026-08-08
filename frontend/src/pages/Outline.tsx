@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useRef } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, theme } from 'antd';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, Divider, theme } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
@@ -8,7 +8,7 @@ import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
-import AIServiceSelector from '../components/AIServiceSelector';
+import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
 import SkillSelector from '../components/SkillSelector';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
@@ -126,6 +126,17 @@ export default function Outline() {
   const [outlineGenerationMode, setOutlineGenerationMode] = useState<'single' | 'compare'>('single');
   const [outlineSkillKey, setOutlineSkillKey] = useState<string | undefined>();
   const [outlineComparisonSelections, setOutlineComparisonSelections] = useState<LLMComparisonSelection[]>([]);
+  // AI 润色（编辑弹窗）状态
+  const [editingOutlineId, setEditingOutlineId] = useState<string | undefined>();
+  const [editAIInstruction, setEditAIInstruction] = useState('');
+  const [editAISkillKey, setEditAISkillKey] = useState<string | undefined>();
+  const [editAISelection, setEditAISelection] = useState<AIServiceSelection | undefined>();
+  const [editAILoading, setEditAILoading] = useState(false);
+  // AI 起草（手动创建弹窗）状态
+  const [draftAIInstruction, setDraftAIInstruction] = useState('');
+  const [draftAISkillKey, setDraftAISkillKey] = useState<string | undefined>();
+  const [draftAISelection, setDraftAISelection] = useState<AIServiceSelection | undefined>();
+  const [draftAILoading, setDraftAILoading] = useState(false);
   const [outlineComparisonBatch, setOutlineComparisonBatch] = useState<LLMComparisonBatch | null>(null);
   const [outlineComparisonVisible, setOutlineComparisonVisible] = useState(false);
   const [outlineComparisonBusy, setOutlineComparisonBusy] = useState(false);
@@ -276,6 +287,11 @@ export default function Outline() {
   const handleOpenEditModal = (id: string) => {
     const outline = outlines.find(o => o.id === id);
     if (outline) {
+      // 重置 AI 润色状态
+      setEditingOutlineId(id);
+      setEditAIInstruction('');
+      setEditAISkillKey(undefined);
+      setEditAISelection(undefined);
       const structureData = outlineStructureMap[outline.id] || {};
       
       // 解析角色/组织条目（兼容新旧格式）
@@ -418,6 +434,27 @@ export default function Outline() {
             >
               <Input placeholder="例如：建立世界观对比并完成主角初遇" />
             </Form.Item>
+
+            <Divider style={{ margin: '16px 0 8px' }}>🤖 AI 润色（建议回填表单，确认后再保存）</Divider>
+            <TextArea
+              rows={1}
+              placeholder="润色方向（可选）：例如：加强章末钩子、压缩篇幅、更强调冲突"
+              value={editAIInstruction}
+              onChange={e => setEditAIInstruction(e.target.value)}
+              style={{ marginBottom: 8 }}
+            />
+            <SkillSelector value={editAISkillKey} onChange={setEditAISkillKey} disabled={editAILoading} />
+            <AIServiceSelector usageType="outline" value={editAISelection} onChange={setEditAISelection} disabled={editAILoading} />
+            <Button
+              type="primary"
+              ghost
+              icon={<ThunderboltOutlined />}
+              loading={editAILoading}
+              onClick={handleAIEditOutline}
+              style={{ marginTop: 4 }}
+            >
+              AI 润色
+            </Button>
           </Form>
         ),
         okText: '更新',
@@ -504,6 +541,49 @@ export default function Outline() {
           }
         },
       });
+    }
+  };
+
+  // AI 润色：调后端生成建议，回填表单（不直接入库）
+  const handleAIEditOutline = async () => {
+    if (!editingOutlineId) return;
+    setEditAILoading(true);
+    try {
+      const res = await outlineApi.aiEdit(editingOutlineId, {
+        instruction: editAIInstruction.trim() || undefined,
+        skill_key: editAISkillKey,
+        provider_config_id: editAISelection?.provider_config_id,
+        model: editAISelection?.model,
+      });
+      editForm.setFieldsValue({ title: res.title, content: res.content });
+      message.success('AI 润色完成，已填入表单；角色/场景等结构化字段如有变化请手动核对后再保存');
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || 'AI 润色失败');
+    } finally {
+      setEditAILoading(false);
+    }
+  };
+
+  // AI 起草：调后端生成建议，回填表单（不直接入库）
+  const handleAIDraftOutline = async () => {
+    setDraftAILoading(true);
+    try {
+      const res = await outlineApi.aiDraft({
+        project_id: currentProject.id,
+        order_index: manualCreateForm.getFieldValue('order_index') || undefined,
+        instruction: draftAIInstruction.trim() || undefined,
+        skill_key: draftAISkillKey,
+        provider_config_id: draftAISelection?.provider_config_id,
+        model: draftAISelection?.model,
+      });
+      manualCreateForm.setFieldsValue({ order_index: res.order_index, title: res.title, content: res.content });
+      message.success('AI 起草完成，已填入表单；请确认后再创建');
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || 'AI 起草失败');
+    } finally {
+      setDraftAILoading(false);
     }
   };
 
@@ -924,6 +1004,27 @@ export default function Outline() {
               placeholder="描述本章/卷的主要情节和发展方向..."
             />
           </Form.Item>
+
+          <Divider style={{ margin: '16px 0 8px' }}>🤖 AI 起草（建议回填表单，确认后再创建）</Divider>
+          <TextArea
+            rows={1}
+            placeholder="起草要求（可选）：例如：写一卷主角初入帮派的过渡卷"
+            value={draftAIInstruction}
+            onChange={e => setDraftAIInstruction(e.target.value)}
+            style={{ marginBottom: 8 }}
+          />
+          <SkillSelector value={draftAISkillKey} onChange={setDraftAISkillKey} disabled={draftAILoading} />
+          <AIServiceSelector usageType="outline" value={draftAISelection} onChange={setDraftAISelection} disabled={draftAILoading} />
+          <Button
+            type="primary"
+            ghost
+            icon={<ThunderboltOutlined />}
+            loading={draftAILoading}
+            onClick={handleAIDraftOutline}
+            style={{ marginTop: 4 }}
+          >
+            AI 起草
+          </Button>
         </Form>
       ),
       okText: '创建',

@@ -3,7 +3,7 @@
   "name": "outline-ai-edit",
   "title": "单条大纲AI润色与AI生成起草",
   "description": "编辑弹窗加AI润色按钮（新接口，返回改写建议填入表单待确认保存，不直接入库）；手动创建弹窗加AI起草按钮（AI根据项目上下文先起草一条大纲）。两者均可选模型与SKILL。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

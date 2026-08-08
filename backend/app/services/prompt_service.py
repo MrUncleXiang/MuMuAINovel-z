@@ -556,6 +556,120 @@ class PromptService:
 ❌ 忽略最近大纲中的情节线索
 </constraints>"""
     
+    # 单条大纲 AI 润色提示词（编辑弹窗使用，结果不入库仅作建议）
+    OUTLINE_AI_EDIT = """<system>
+你是经验丰富的小说作家和编剧，擅长修改和润色小说大纲条目。
+</system>
+
+<task>
+【润色任务】
+润色以下大纲条目，提升其质量。
+
+【润色方向】
+{instruction}
+
+【输出要求】
+- 保持与原大纲一致的风格、信息和叙事逻辑
+- 如非必要不要改变涉及角色/组织/场景/情感基调的语义；如确有调整，在输出末尾单独列出变化点
+- 标题保持简洁有吸引力，内容控制在 200-500 字
+- 只输出 JSON，不要输出任何其他文字：
+
+{{
+  "title": "建议标题",
+  "content": "建议内容",
+  "changes": ["变化点1", "变化点2"]
+}}
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P0">
+【所有角色信息】
+{characters_info}
+</characters>
+
+<context priority="P0">
+【当前大纲条目】
+序号：{order_index}
+标题：{current_title}
+内容：{current_content}
+</context>
+
+<neighbors priority="P1">
+【相邻大纲（前一条/后一条）】
+{neighbors}
+</neighbors>
+"""
+    
+    # 单条大纲 AI 起草提示词（手动创建弹窗使用，结果不入库仅作建议）
+    OUTLINE_AI_DRAFT = """<system>
+你是经验丰富的小说作家和编剧，擅长为小说项目起草新的单条大纲。
+</system>
+
+<task>
+【起草任务】
+根据项目上下文，起草一条新的大纲条目。
+
+【起草要求】
+{instruction}
+
+【输出要求】
+- 新条目要与已有大纲自然衔接，风格一致
+- 如非必要不要引入新角色/组织；如确有必要，在输出末尾单独列出
+- 内容控制在 200-500 字
+- 只输出 JSON，不要输出任何其他文字：
+
+{{
+  "title": "建议标题",
+  "content": "建议内容",
+  "changes": ["新引入的角色/组织或衔接说明"]
+}}
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P0">
+【所有角色信息】
+{characters_info}
+</characters>
+
+<context priority="P0">
+【插入位置】
+建议序号：{order_index}
+
+【前后大纲】
+{neighbors}
+</context>
+"""
+    
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
 你是《{project_title}》的作者，一位专注于{genre}类型的网络小说家。
@@ -2931,6 +3045,22 @@ class PromptService:
                              "location", "atmosphere", "rules", "characters_info", "current_chapter_count", 
                              "all_chapters_brief", "recent_plot", "memory_context", "mcp_references", 
                              "plot_stage_instruction", "start_chapter", "end_chapter", "story_direction", "requirements"]
+            },
+            "OUTLINE_AI_EDIT": {
+                "name": "大纲润色",
+                "category": "大纲生成",
+                "description": "单条大纲AI润色（编辑弹窗，结果回填表单不入库）",
+                "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
+                             "location", "atmosphere", "rules", "characters_info", "order_index", 
+                             "current_title", "current_content", "neighbors", "instruction"]
+            },
+            "OUTLINE_AI_DRAFT": {
+                "name": "大纲起草",
+                "category": "大纲生成",
+                "description": "单条大纲AI起草（创建弹窗，结果回填表单不入库）",
+                "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
+                             "location", "atmosphere", "rules", "characters_info", "order_index", 
+                             "neighbors", "instruction"]
             },
             "CHAPTER_GENERATION_ONE_TO_MANY": {
                 "name": "章节创作-1-N模式（第1章）",
