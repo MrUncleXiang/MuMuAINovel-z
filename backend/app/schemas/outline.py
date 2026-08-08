@@ -109,6 +109,10 @@ class OutlineAIEditResponse(BaseModel):
     """单条大纲 AI 润色响应模型（建议值，不入库）"""
     title: str = Field(..., description="建议标题")
     content: str = Field(..., description="建议内容")
+    scenes: Optional[list[str]] = Field(None, description="建议场景列表（每行一个）")
+    key_points: Optional[list[str]] = Field(None, description="建议情节要点列表")
+    emotion: Optional[str] = Field(None, description="建议情感基调")
+    goal: Optional[str] = Field(None, description="建议叙事目标")
 
 
 class OutlineAIDraftRequest(BaseModel):

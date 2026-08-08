@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, func, delete
-from typing import List, AsyncGenerator, Dict, Any
+from typing import List, AsyncGenerator, Dict, Any, Optional
 import json
 import asyncio
 
@@ -1879,7 +1879,22 @@ def _parse_ai_edit_response(raw: str) -> dict:
                 title = str(data.get("title") or "").strip()
                 content = str(data.get("content") or data.get("summary") or "").strip()
                 if title and content:
-                    return {"title": title, "content": content, "changes": data.get("changes")}
+                    # 结构字段：兼容数组/字符串/缺失
+                    def to_list(v):
+                        if isinstance(v, list):
+                            return [str(x).strip() for x in v if str(x).strip()]
+                        if isinstance(v, str) and v.strip():
+                            return [ln.strip() for ln in v.split("\n") if ln.strip()]
+                        return None
+                    return {
+                        "title": title,
+                        "content": content,
+                        "scenes": to_list(data.get("scenes")),
+                        "key_points": to_list(data.get("key_points") or data.get("keyPoints")),
+                        "emotion": str(data.get("emotion") or "").strip() or None,
+                        "goal": str(data.get("goal") or "").strip() or None,
+                        "changes": data.get("changes"),
+                    }
         except Exception:
             continue
     # 兜底：首行作为标题，其余作为内容
@@ -1887,6 +1902,34 @@ def _parse_ai_edit_response(raw: str) -> dict:
     if len(lines) >= 2:
         return {"title": lines[0], "content": "\n".join(lines[1:])}
     raise ValueError("无法从 AI 响应中解析出标题与内容")
+
+
+def _structure_fields_text(structure: Optional[str]) -> dict:
+    """从 structure JSON 提取场景/要点/情感/目标的文本（无则返回占位）"""
+    try:
+        data = json.loads(structure) if structure else {}
+    except Exception:
+        data = {}
+    scenes = data.get("scenes")
+    if isinstance(scenes, list):
+        scenes_text = "\n".join(str(s) for s in scenes)
+    elif isinstance(scenes, str):
+        scenes_text = scenes
+    else:
+        scenes_text = "（无）"
+    key_points = data.get("key_points")
+    if isinstance(key_points, list):
+        kp_text = "\n".join(str(k) for k in key_points)
+    elif isinstance(key_points, str):
+        kp_text = key_points
+    else:
+        kp_text = "（无）"
+    return {
+        "current_scenes": scenes_text,
+        "current_key_points": kp_text,
+        "current_emotion": str(data.get("emotion") or "（无）"),
+        "current_goal": str(data.get("goal") or "（无）"),
+    }
 
 
 @router.post("/ai-draft", response_model=OutlineAIDraftResponse, summary="单条大纲AI起草（建议不入库）")
@@ -1977,6 +2020,7 @@ async def outline_ai_edit(
         select(Outline).where(Outline.project_id == outline.project_id).order_by(Outline.order_index)
     )).all())
     characters = list((await db.scalars(select(Character).where(Character.project_id == outline.project_id))).all())
+    struct_fields = _structure_fields_text(outline.structure)
 
     template = await PromptService.get_template("OUTLINE_AI_EDIT", user_id, db)
     prompt = PromptService.format_prompt(
@@ -1993,6 +2037,10 @@ async def outline_ai_edit(
         order_index=outline.order_index,
         current_title=outline.title,
         current_content=outline.content or "",
+        current_scenes=struct_fields["current_scenes"],
+        current_key_points=struct_fields["current_key_points"],
+        current_emotion=struct_fields["current_emotion"],
+        current_goal=struct_fields["current_goal"],
         neighbors=_build_neighbors_text(outlines, outline.order_index),
         instruction=payload.instruction or "提升大纲质量：更具体的冲突、更清晰的节奏、更抓人的标题",
     )
@@ -2022,7 +2070,7 @@ async def outline_ai_edit(
     ))
     await db.commit()
 
-    return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"])
+    return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"], scenes=parsed.get("scenes"), key_points=parsed.get("key_points"), emotion=parsed.get("emotion"), goal=parsed.get("goal"))
 
 
 @router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")

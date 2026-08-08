@@ -2567,8 +2567,15 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
         provider_config_id: selection?.provider_config_id,
         model: selection?.model,
       });
-      form.setFieldsValue({ title: res.title, content: res.content });
-      message.success('AI 润色完成，已填入表单；角色/场景等结构化字段如有变化请手动核对后再保存');
+      form.setFieldsValue({
+        title: res.title,
+        content: res.content,
+        scenes: res.scenes ? res.scenes.join('\n') : undefined,
+        key_points: res.key_points ? res.key_points.join('\n') : undefined,
+        emotion: res.emotion ?? undefined,
+        goal: res.goal ?? undefined,
+      });
+      message.success('AI 润色完成，已填入表单（含场景/要点/情感/目标）；请确认后再保存');
     } catch (error) {
       const apiError = error as ApiError;
       message.error(apiError.response?.data?.detail || 'AI 润色失败');

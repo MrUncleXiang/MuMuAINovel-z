@@ -570,13 +570,18 @@ class PromptService:
 
 【输出要求】
 - 保持与原大纲一致的风格、信息和叙事逻辑
-- 如非必要不要改变涉及角色/组织/场景/情感基调的语义；如确有调整，在输出末尾单独列出变化点
+- 如非必要不要改变涉及角色/组织/情感基调的语义；如确有调整，在输出末尾单独列出变化点
 - 标题保持简洁有吸引力，内容控制在 200-500 字
+- 场景/情节要点/情感基调/叙事目标：基于当前值优化，若当前为空则按大纲内容合理生成（场景每行一个，2-4 个；情节要点 2-4 个）
 - 只输出 JSON，不要输出任何其他文字：
 
 {{
   "title": "建议标题",
   "content": "建议内容",
+  "scenes": ["场景1", "场景2"],
+  "key_points": ["要点1", "要点2"],
+  "emotion": "情感基调",
+  "goal": "叙事目标",
   "changes": ["变化点1", "变化点2"]
 }}
 </task>
@@ -607,6 +612,10 @@ class PromptService:
 序号：{order_index}
 标题：{current_title}
 内容：{current_content}
+场景：{current_scenes}
+情节要点：{current_key_points}
+情感基调：{current_emotion}
+叙事目标：{current_goal}
 </context>
 
 <neighbors priority="P1">
@@ -3052,7 +3061,8 @@ class PromptService:
                 "description": "单条大纲AI润色（编辑弹窗，结果回填表单不入库）",
                 "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
                              "location", "atmosphere", "rules", "characters_info", "order_index", 
-                             "current_title", "current_content", "neighbors", "instruction"]
+                             "current_title", "current_content", "current_scenes", "current_key_points", 
+                             "current_emotion", "current_goal", "neighbors", "instruction"]
             },
             "OUTLINE_AI_DRAFT": {
                 "name": "大纲起草",
