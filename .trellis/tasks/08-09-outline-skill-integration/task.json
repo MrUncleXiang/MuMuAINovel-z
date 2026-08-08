@@ -3,7 +3,7 @@
   "name": "outline-skill-integration",
   "title": "大纲生成接入SKILL：单选，三条路径确保生效",
   "description": "大纲生成支持选择SKILL并真正生效：OutlineGenerateRequest加skill_key；公共注入函数（复用章节验证过的system_prompt注入方式）；覆盖SSE流式/后台任务/多模型比较三条生成路径；前端生成弹窗加应用Skill下拉。本期单选SKILL。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
