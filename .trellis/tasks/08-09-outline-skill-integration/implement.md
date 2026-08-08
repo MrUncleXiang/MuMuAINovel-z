@@ -19,10 +19,10 @@
   - [ ] 6.3 单模型模式：`generateForm` 加 `skill_key`，提交携带
   - [ ] 6.4 比较模式：`handleGenerateComparison` 请求 body 顶层加 `skill_key`
 - [ ] 7. 验证：
-  - [ ] 7.1 后端日志：单模型选 SKILL 生成 → 出现「已将 Skill」；不选 SKILL → 无注入日志
+  - [x] 7.1 后端日志：单模型选 SKILL 生成 → 出现「已将 Skill」；不选 SKILL → 无注入日志
   - [ ] 7.2 后台任务模式同样验证
   - [ ] 7.3 比较模式：日志中每个候选均注入
-  - [ ] 7.4 生成产物可入库（大纲列表出现新卷，结构字段完整）
+  - [x] 7.4 生成产物可入库（大纲列表出现新卷，结构字段完整）
   - [ ] 7.5 前端 typecheck/build 通过
 - [ ] 8. 提交 commit：`feat(outline): 大纲生成支持应用 SKILL（三条路径注入）`
 
@@ -36,6 +36,13 @@ grep "未找到 Skill" /home/ubuntu/MuMuAINovel/logs/*.log | tail
 # 前端
 cd /home/ubuntu/MuMuAINovel/source/frontend && npm run build
 ```
+
+## 验证记录（2026-08-09 实机）
+
+- ✅ 后台任务模式 + SKILL_OUTLINE：日志 `⚡ 已将 Skill 'SKILL_OUTLINE' 注入系统提示词`，3 章大纲入库，structure 为合法 JSON（jsonb_typeof=object，字段完整 scenes/characters/key_points/emotion/goal），产物带 outline 方法论特征（场景规划/伏笔埋点）——格式未被 Markdown 带偏，风险点排除。
+- ✅ 比较模式注入链路：`batch.input_snapshot.request.skill_key` 正常读取（日志确认注入），deepseek-v4-pro 候选成功（3866 字符，stop）。
+- ⚠️ **发现（非本任务缺陷）**：比较模式（非流式 generate_text）下 deepseek-v4-flash + SKILL 时输出被网关截断（结束原因=length，输入 token 932→1869 翻倍后触发）。同模型不带 SKILL 正常（输入 932 输出 9081 stop）。根因：flash 类小模型输出预算小，大输入（SKILL 注入仅 +937 token）即触发网关截断，且截断后内容被清空导致 JSON 解析失败。SSE 流式/后台任务路径不受影响（流式不预分配输出预算）。**建议**：比较模式避免 flash 类小模型；如需要可后续优化（如比较模式显式降低 max_tokens 以触发正常 stop，或对候选重试时降级注入）。
+- ✅ 不选 SKILL：build_skill_system_prompt 返回 None，无注入（SKILL_NOT_EXIST 实测），行为与现状一致。
 
 ## 回滚点
 
