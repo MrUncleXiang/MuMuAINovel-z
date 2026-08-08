@@ -4,15 +4,15 @@
 
 ## 执行清单（按序）
 
-- [ ] 1. `services/skill_loader.py`：新增 `build_skill_system_prompt(skill_key)` 公共函数（格式见 design §1）。
-- [ ] 2. `api/chapters.py`：1440-1463 行改为调用公共函数（日志保留在调用侧），跑一遍章节生成冒烟确认行为不变。
-- [ ] 3. `schemas/outline.py`：`OutlineGenerateRequest` 加 `skill_key` 字段。
+- [x] 1. `services/skill_loader.py`：新增 `build_skill_system_prompt(skill_key)` 公共函数（格式见 design §1）。
+- [x] 2. `api/chapters.py`：1440-1463 行改为调用公共函数（日志保留在调用侧），跑一遍章节生成冒烟确认行为不变。
+- [x] 3. `schemas/outline.py`：`OutlineGenerateRequest` 加 `skill_key` 字段。
 - [ ] 4. `api/outlines.py`（**注意：每条函数 2 次生成调用——首次 + 重试分支——都要传 system_prompt，在函数顶部统一构造**）：
   - [ ] 4.1 `new_outline_generator`：首+重试两处 `generate_text_stream` 都传 `system_prompt`，并加注入/未找到日志
   - [ ] 4.2 `continue_outline_generator`：同上
   - [ ] 4.3 `_run_new_outline_bg`：同上（task_input 取 skill_key，重试循环内也要传）
   - [ ] 4.4 `_run_continue_outline_bg`：同上
-- [ ] 5. `services/outline_comparison_service.py`：`generate_outline_candidate` 从 `batch.input_snapshot["request"].get("skill_key")` 取（**不是 payload，候选生成时无 payload 对象**）→ `service.generate_text(system_prompt=...)`。
+- [x] 5. `services/outline_comparison_service.py`：`generate_outline_candidate` 从 `batch.input_snapshot["request"].get("skill_key")` 取（**不是 payload，候选生成时无 payload 对象**）→ `service.generate_text(system_prompt=...)`。
 - [ ] 6. 前端：
   - [ ] 6.1 新建 `components/SkillSelector.tsx` 公共组件（加载/渲染/outline 置顶+推荐；子任务 3 复用）
   - [ ] 6.2 生成弹窗「生成方式」下方加「应用 Skill」Form.Item（两种模式都显示）
