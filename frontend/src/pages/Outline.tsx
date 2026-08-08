@@ -8,7 +8,7 @@ import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
-import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
+import AIServiceSelector from '../components/AIServiceSelector';
 import SkillSelector from '../components/SkillSelector';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
@@ -124,18 +124,10 @@ export default function Outline() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
   const [outlineGenerationMode, setOutlineGenerationMode] = useState<'single' | 'compare'>('single');
-  const [outlineSkillKey, setOutlineSkillKey] = useState<string | undefined>();
   const [outlineComparisonSelections, setOutlineComparisonSelections] = useState<LLMComparisonSelection[]>([]);
-  // AI 润色（编辑弹窗）状态
-  const [editingOutlineId, setEditingOutlineId] = useState<string | undefined>();
-  const [editAIInstruction, setEditAIInstruction] = useState('');
-  const [editAISkillKey, setEditAISkillKey] = useState<string | undefined>();
-  const [editAISelection, setEditAISelection] = useState<AIServiceSelection | undefined>();
+  // AI 润色（编辑弹窗）/ AI 起草（创建弹窗）loading 状态
+  // （输入值全部走 Form 字段管理，modal.confirm 内容不随 state 重渲染，不能用受控 state）
   const [editAILoading, setEditAILoading] = useState(false);
-  // AI 起草（手动创建弹窗）状态
-  const [draftAIInstruction, setDraftAIInstruction] = useState('');
-  const [draftAISkillKey, setDraftAISkillKey] = useState<string | undefined>();
-  const [draftAISelection, setDraftAISelection] = useState<AIServiceSelection | undefined>();
   const [draftAILoading, setDraftAILoading] = useState(false);
   const [outlineComparisonBatch, setOutlineComparisonBatch] = useState<LLMComparisonBatch | null>(null);
   const [outlineComparisonVisible, setOutlineComparisonVisible] = useState(false);
@@ -287,11 +279,6 @@ export default function Outline() {
   const handleOpenEditModal = (id: string) => {
     const outline = outlines.find(o => o.id === id);
     if (outline) {
-      // 重置 AI 润色状态
-      setEditingOutlineId(id);
-      setEditAIInstruction('');
-      setEditAISkillKey(undefined);
-      setEditAISelection(undefined);
       const structureData = outlineStructureMap[outline.id] || {};
       
       // 解析角色/组织条目（兼容新旧格式）
@@ -325,7 +312,12 @@ export default function Outline() {
         scenes: scenesText,
         key_points: keyPointsText,
         emotion: structureData.emotion || '',
-        goal: structureData.goal || ''
+        goal: structureData.goal || '',
+        // AI 润色字段（Form 驱动，打开时清空）
+        ai_instruction: undefined,
+        ai_skill_key: undefined,
+        ai_provider_config_id: undefined,
+        ai_model: undefined,
       });
       
       modalApi.confirm({
@@ -436,21 +428,31 @@ export default function Outline() {
             </Form.Item>
 
             <Divider style={{ margin: '16px 0 8px' }}>🤖 AI 润色（建议回填表单，确认后再保存）</Divider>
-            <TextArea
-              rows={1}
-              placeholder="润色方向（可选）：例如：加强章末钩子、压缩篇幅、更强调冲突"
-              value={editAIInstruction}
-              onChange={e => setEditAIInstruction(e.target.value)}
-              style={{ marginBottom: 8 }}
-            />
-            <SkillSelector value={editAISkillKey} onChange={setEditAISkillKey} disabled={editAILoading} />
-            <AIServiceSelector usageType="outline" value={editAISelection} onChange={setEditAISelection} disabled={editAILoading} />
+            <Form.Item name="ai_instruction" style={{ marginBottom: 8 }}>
+              <TextArea
+                rows={1}
+                placeholder="润色方向（可选）：例如：加强章末钩子、压缩篇幅、更强调冲突"
+              />
+            </Form.Item>
+            <Form.Item label="应用 Skill" name="ai_skill_key" style={{ marginBottom: 8 }}>
+              <SkillSelector disabled={editAILoading} />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate>
+              {({ getFieldValue, setFieldsValue }) => (
+                <AIServiceSelector
+                  usageType="outline"
+                  value={{ provider_config_id: getFieldValue('ai_provider_config_id'), model: getFieldValue('ai_model') }}
+                  onChange={(selection) => setFieldsValue(selection)}
+                  disabled={editAILoading}
+                />
+              )}
+            </Form.Item>
             <Button
               type="primary"
               ghost
               icon={<ThunderboltOutlined />}
               loading={editAILoading}
-              onClick={handleAIEditOutline}
+              onClick={() => handleAIEditOutline(outline.id)}
               style={{ marginTop: 4 }}
             >
               AI 润色
@@ -544,16 +546,16 @@ export default function Outline() {
     }
   };
 
-  // AI 润色：调后端生成建议，回填表单（不直接入库）
-  const handleAIEditOutline = async () => {
-    if (!editingOutlineId) return;
+  // AI 润色：调后端生成建议，回填表单（不直接入库）；outlineId 由按钮直接传入（modal 内容不随 state 重渲染）
+  const handleAIEditOutline = async (outlineId: string) => {
     setEditAILoading(true);
     try {
-      const res = await outlineApi.aiEdit(editingOutlineId, {
-        instruction: editAIInstruction.trim() || undefined,
-        skill_key: editAISkillKey,
-        provider_config_id: editAISelection?.provider_config_id,
-        model: editAISelection?.model,
+      const values = editForm.getFieldsValue();
+      const res = await outlineApi.aiEdit(outlineId, {
+        instruction: (values.ai_instruction as string)?.trim() || undefined,
+        skill_key: values.ai_skill_key as string | undefined,
+        provider_config_id: values.ai_provider_config_id as string | undefined,
+        model: values.ai_model as string | undefined,
       });
       editForm.setFieldsValue({ title: res.title, content: res.content });
       message.success('AI 润色完成，已填入表单；角色/场景等结构化字段如有变化请手动核对后再保存');
@@ -569,13 +571,14 @@ export default function Outline() {
   const handleAIDraftOutline = async () => {
     setDraftAILoading(true);
     try {
+      const values = manualCreateForm.getFieldsValue();
       const res = await outlineApi.aiDraft({
         project_id: currentProject.id,
-        order_index: manualCreateForm.getFieldValue('order_index') || undefined,
-        instruction: draftAIInstruction.trim() || undefined,
-        skill_key: draftAISkillKey,
-        provider_config_id: draftAISelection?.provider_config_id,
-        model: draftAISelection?.model,
+        order_index: (values.order_index as number) || undefined,
+        instruction: (values.draft_ai_instruction as string)?.trim() || undefined,
+        skill_key: values.draft_ai_skill_key as string | undefined,
+        provider_config_id: values.draft_ai_provider_config_id as string | undefined,
+        model: values.draft_ai_model as string | undefined,
       });
       manualCreateForm.setFieldsValue({ order_index: res.order_index, title: res.title, content: res.content });
       message.success('AI 起草完成，已填入表单；请确认后再创建');
@@ -607,6 +610,7 @@ export default function Outline() {
     chapter_count?: number;
     narrative_perspective?: string;
     requirements?: string;
+    skill_key?: string;
     provider?: string;
     model?: string;
     mode?: 'auto' | 'new' | 'continue';
@@ -640,7 +644,7 @@ export default function Outline() {
         mode: values.mode || 'auto',
         story_direction: values.story_direction,
         plot_stage: values.plot_stage || 'development',
-        skill_key: outlineSkillKey,
+        skill_key: values.skill_key,
       };
 
       // 只有在用户选择了模型时才添加model参数
@@ -724,7 +728,7 @@ export default function Outline() {
         mode: values.mode || 'auto',
         story_direction: values.story_direction,
         plot_stage: values.plot_stage || 'development',
-        skill_key: outlineSkillKey,
+        skill_key: values.skill_key,
         selections: outlineComparisonSelections,
       });
       Modal.destroyAll();
@@ -775,7 +779,7 @@ export default function Outline() {
   const showGenerateModal = async () => {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
-    setOutlineSkillKey(undefined);
+    generateForm.setFieldsValue({ skill_key: undefined });
 
     // 预填默认服务商及其默认模型（当前 = OpenCode Go · deepseek-v4-flash），动态获取不硬编码
     let defaultSelection: { provider_config_id?: string; model?: string } = {};
@@ -824,7 +828,9 @@ export default function Outline() {
               onChange={value => setOutlineGenerationMode(value as 'single' | 'compare')}
             />
           </Form.Item>
-          <SkillSelector value={outlineSkillKey} onChange={setOutlineSkillKey} disabled={outlineComparisonBusy} />
+          <Form.Item label="应用 Skill" name="skill_key" style={{ marginBottom: 8 }}>
+            <SkillSelector disabled={outlineComparisonBusy} />
+          </Form.Item>
           {hasOutlines && (
             <Form.Item
               label="生成模式"
@@ -965,6 +971,14 @@ export default function Outline() {
     const nextOrderIndex = outlines.length > 0
       ? Math.max(...outlines.map(o => o.order_index)) + 1
       : 1;
+    // 清空 AI 起草字段（Form 驱动，打开时重置）
+    manualCreateForm.setFieldsValue({
+      order_index: nextOrderIndex,
+      draft_ai_instruction: undefined,
+      draft_ai_skill_key: undefined,
+      draft_ai_provider_config_id: undefined,
+      draft_ai_model: undefined,
+    });
 
     modalApi.confirm({
       title: '手动创建大纲',
@@ -1006,15 +1020,25 @@ export default function Outline() {
           </Form.Item>
 
           <Divider style={{ margin: '16px 0 8px' }}>🤖 AI 起草（建议回填表单，确认后再创建）</Divider>
-          <TextArea
-            rows={1}
-            placeholder="起草要求（可选）：例如：写一卷主角初入帮派的过渡卷"
-            value={draftAIInstruction}
-            onChange={e => setDraftAIInstruction(e.target.value)}
-            style={{ marginBottom: 8 }}
-          />
-          <SkillSelector value={draftAISkillKey} onChange={setDraftAISkillKey} disabled={draftAILoading} />
-          <AIServiceSelector usageType="outline" value={draftAISelection} onChange={setDraftAISelection} disabled={draftAILoading} />
+          <Form.Item name="draft_ai_instruction" style={{ marginBottom: 8 }}>
+            <TextArea
+              rows={1}
+              placeholder="起草要求（可选）：例如：写一卷主角初入帮派的过渡卷"
+            />
+          </Form.Item>
+          <Form.Item label="应用 Skill" name="draft_ai_skill_key" style={{ marginBottom: 8 }}>
+            <SkillSelector disabled={draftAILoading} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue, setFieldsValue }) => (
+              <AIServiceSelector
+                usageType="outline"
+                value={{ provider_config_id: getFieldValue('draft_ai_provider_config_id'), model: getFieldValue('draft_ai_model') }}
+                onChange={(selection) => setFieldsValue(selection)}
+                disabled={draftAILoading}
+              />
+            )}
+          </Form.Item>
           <Button
             type="primary"
             ghost

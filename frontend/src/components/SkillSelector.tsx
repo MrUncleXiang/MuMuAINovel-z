@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Form, Select, Tag, theme } from 'antd';
+import { Select, Tag, theme } from 'antd';
 
 interface SkillSummary {
   template_key: string;
@@ -14,7 +14,7 @@ interface Props {
   disabled?: boolean;
 }
 
-/** 大纲/编辑等弹窗共用的「应用 Skill」下拉：outline 置顶 + 推荐标注，其余按分类排序。 */
+/** 生成/编辑弹窗共用的「应用 Skill」选择控件（纯控件，由调用方用 Form.Item 包裹；outline 置顶 + 推荐标注）。 */
 export default function SkillSelector({ value, onChange, disabled }: Props) {
   const { token } = theme.useToken();
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -43,7 +43,7 @@ export default function SkillSelector({ value, onChange, disabled }: Props) {
   const selected = skills.find(s => s.template_key === value);
 
   return (
-    <Form.Item label="应用 Skill" style={{ marginBottom: 8 }}>
+    <>
       <Select
         placeholder="不使用 Skill（标准创作）"
         value={value}
@@ -52,6 +52,7 @@ export default function SkillSelector({ value, onChange, disabled }: Props) {
         disabled={disabled}
         showSearch
         optionFilterProp="label"
+        style={{ width: '100%' }}
       >
         {sortedSkills.map(skill => (
           <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
@@ -68,6 +69,6 @@ export default function SkillSelector({ value, onChange, disabled }: Props) {
           ✓ {selected.description}
         </div>
       )}
-    </Form.Item>
+    </>
   );
 }
