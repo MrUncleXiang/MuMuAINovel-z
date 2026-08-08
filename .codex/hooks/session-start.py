@@ -84,7 +84,7 @@ message above this hook output, that message is your only job.
 - Ignore all Rudder workflow guidance below this notice.
 - Do NOT call task.py start, task.py add-context, or task.py archive.
 - Do NOT call wait_agent or spawn_agent.
-- Do NOT modify .rudder/tasks/* or any other file unless the parent message
+- Do NOT modify .trellis/tasks/* or any other file unless the parent message
   explicitly asks for that.
 
 If you are the main interactive Codex session and the user is typing at the
@@ -102,7 +102,7 @@ def should_skip_injection() -> bool:
 
 def configure_project_encoding(project_dir: Path) -> None:
     """Reuse Rudder' shared Windows stdio encoding helper before JSON output."""
-    scripts_dir = project_dir / ".rudder" / "scripts"
+    scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
 
@@ -145,7 +145,7 @@ def read_file(path: Path, fallback: str = "") -> str:
 
 
 def _resolve_context_key(project_dir: Path, hook_input: dict) -> str | None:
-    scripts_dir = project_dir / ".rudder" / "scripts"
+    scripts_dir = project_dir / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     try:
@@ -155,13 +155,13 @@ def _resolve_context_key(project_dir: Path, hook_input: dict) -> str | None:
     return resolve_context_key(hook_input, platform="codex")
 
 
-def _resolve_active_task(rudder_dir: Path, hook_input: dict):
-    scripts_dir = rudder_dir / "scripts"
+def _resolve_active_task(trellis_dir: Path, hook_input: dict):
+    scripts_dir = trellis_dir / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     from common.active_task import resolve_active_task  # type: ignore[import-not-found]
 
-    return resolve_active_task(rudder_dir.parent, hook_input, platform="codex")
+    return resolve_active_task(trellis_dir.parent, hook_input, platform="codex")
 
 
 def run_script(script_path: Path, context_key: str | None = None) -> str:
@@ -200,30 +200,30 @@ def _normalize_task_ref(task_ref: str) -> str:
         normalized = normalized[2:]
 
     if normalized.startswith("tasks/"):
-        return f".rudder/{normalized}"
+        return f".trellis/{normalized}"
 
     return normalized
 
 
-def _resolve_task_dir(rudder_dir: Path, task_ref: str) -> Path:
+def _resolve_task_dir(trellis_dir: Path, task_ref: str) -> Path:
     normalized = _normalize_task_ref(task_ref)
     path_obj = Path(normalized)
     if path_obj.is_absolute():
         return path_obj
-    if normalized.startswith(".rudder/"):
-        return rudder_dir.parent / path_obj
-    return rudder_dir / "tasks" / path_obj
+    if normalized.startswith(".trellis/"):
+        return trellis_dir.parent / path_obj
+    return trellis_dir / "tasks" / path_obj
 
 
-def _get_task_status(rudder_dir: Path, hook_input: dict) -> str:
-    active = _resolve_active_task(rudder_dir, hook_input)
+def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
+    active = _resolve_active_task(trellis_dir, hook_input)
     if not active.task_path:
         return f"Status: NO ACTIVE TASK\nSource: {active.source}\nNext: Describe what you want to work on"
 
     task_ref = active.task_path
-    task_dir = _resolve_task_dir(rudder_dir, task_ref)
+    task_dir = _resolve_task_dir(trellis_dir, task_ref)
     if active.stale or not task_dir.is_dir():
-        return f"Status: STALE POINTER\nTask: {task_ref}\nSource: {active.source}\nNext: Task directory not found. Run: python3 ./.rudder/scripts/task.py finish"
+        return f"Status: STALE POINTER\nTask: {task_ref}\nSource: {active.source}\nNext: Task directory not found. Run: python3 ./.trellis/scripts/task.py finish"
 
     task_json_path = task_dir / "task.json"
     task_data: dict = {}
@@ -237,7 +237,7 @@ def _get_task_status(rudder_dir: Path, hook_input: dict) -> str:
     task_status = task_data.get("status", "unknown")
 
     if task_status == "completed":
-        return f"Status: COMPLETED\nTask: {task_title}\nSource: {active.source}\nNext: Archive with `python3 ./.rudder/scripts/task.py archive {task_dir.name}` or start a new task"
+        return f"Status: COMPLETED\nTask: {task_title}\nSource: {active.source}\nNext: Archive with `python3 ./.trellis/scripts/task.py archive {task_dir.name}` or start a new task"
 
     has_context = False
     for jsonl_name in ("implement.jsonl", "check.jsonl", "spec.jsonl"):
@@ -257,11 +257,11 @@ def _get_task_status(rudder_dir: Path, hook_input: dict) -> str:
     return (
         f"Status: READY\nTask: {task_title}\n"
         f"Source: {active.source}\n"
-        "Next required action: dispatch `rudder-implement` per Phase 2.1. "
+        "Next required action: dispatch `trellis-implement` per Phase 2.1. "
         "For agent-capable platforms, the default is to NOT edit code in the main session. "
-        "After implementation, dispatch `rudder-check` per Phase 2.2 before reporting completion.\n"
-        "Sub-agent self-exemption: if you are reading this as a `rudder-implement` or "
-        "`rudder-check` sub-agent (your own role / agent name reflects that), this dispatch "
+        "After implementation, dispatch `trellis-check` per Phase 2.2 before reporting completion.\n"
+        "Sub-agent self-exemption: if you are reading this as a `trellis-implement` or "
+        "`trellis-check` sub-agent (your own role / agent name reflects that), this dispatch "
         "instruction does NOT apply to you — you are already the dispatched sub-agent. "
         "Implement / check directly without spawning another sub-agent of the same kind.\n"
         "User override (per-turn escape hatch): if the user's CURRENT message explicitly tells the "
@@ -315,7 +315,7 @@ def _build_workflow_toc(workflow_path: Path) -> str:
 
     out_lines = [
         "# Development Workflow — Section Index",
-        "Full guide: .rudder/workflow.md  (read on demand)",
+        "Full guide: .trellis/workflow.md  (read on demand)",
         "",
         "## Table of Contents",
     ]
@@ -347,7 +347,7 @@ def main() -> None:
 
     configure_project_encoding(project_dir)
 
-    rudder_dir = project_dir / ".rudder"
+    trellis_dir = project_dir / ".trellis"
     context_key = _resolve_context_key(project_dir, hook_input)
 
     output = StringIO()
@@ -365,12 +365,12 @@ Read and follow all instructions below carefully.
     output.write("\n\n")
 
     output.write("<current-state>\n")
-    context_script = rudder_dir / "scripts" / "get_context.py"
+    context_script = trellis_dir / "scripts" / "get_context.py"
     output.write(run_script(context_script, context_key))
     output.write("\n</current-state>\n\n")
 
     output.write("<workflow>\n")
-    output.write(_build_workflow_toc(rudder_dir / "workflow.md"))
+    output.write(_build_workflow_toc(trellis_dir / "workflow.md"))
     output.write("\n</workflow>\n\n")
 
     output.write("<guidelines>\n")
@@ -382,18 +382,18 @@ Read and follow all instructions below carefully.
         "automatically via `{task}/implement.jsonl` / `check.jsonl`. You do NOT "
         "need to read these indexes yourself.\n"
         "- For agent-capable platforms, the default is to dispatch "
-        "`rudder-implement` and `rudder-check` (so JSONL context is loaded by "
+        "`trellis-implement` and `trellis-check` (so JSONL context is loaded by "
         "the sub-agents) rather than editing code in the main session. "
         "Honor a per-turn user override only if the user's current message "
         "explicitly opts out (see <task-status> below for override phrases).\n"
-        "- Sub-agent self-exemption: if you are reading this as a `rudder-implement` "
-        "or `rudder-check` sub-agent, the \"dispatch rudder-implement / rudder-check\" "
+        "- Sub-agent self-exemption: if you are reading this as a `trellis-implement` "
+        "or `trellis-check` sub-agent, the \"dispatch trellis-implement / trellis-check\" "
         "rule above does NOT apply to you — you are already the dispatched sub-agent. "
         "Do NOT spawn another sub-agent of the same kind; implement / check directly.\n\n"
     )
 
     # guides/ inlined (cross-package thinking, broadly useful)
-    guides_index = rudder_dir / "spec" / "guides" / "index.md"
+    guides_index = trellis_dir / "spec" / "guides" / "index.md"
     if guides_index.is_file():
         output.write("## guides (inlined — cross-package thinking guides)\n")
         output.write(read_file(guides_index))
@@ -401,7 +401,7 @@ Read and follow all instructions below carefully.
 
     # Other indexes — paths only
     paths: list[str] = []
-    spec_dir = rudder_dir / "spec"
+    spec_dir = trellis_dir / "spec"
     if spec_dir.is_dir():
         for sub in sorted(spec_dir.iterdir()):
             if not sub.is_dir() or sub.name.startswith("."):
@@ -410,7 +410,7 @@ Read and follow all instructions below carefully.
                 continue
             index_file = sub / "index.md"
             if index_file.is_file():
-                paths.append(f".rudder/spec/{sub.name}/index.md")
+                paths.append(f".trellis/spec/{sub.name}/index.md")
             else:
                 for nested in sorted(sub.iterdir()):
                     if not nested.is_dir():
@@ -418,7 +418,7 @@ Read and follow all instructions below carefully.
                     nested_index = nested / "index.md"
                     if nested_index.is_file():
                         paths.append(
-                            f".rudder/spec/{sub.name}/{nested.name}/index.md"
+                            f".trellis/spec/{sub.name}/{nested.name}/index.md"
                         )
 
     if paths:
@@ -429,11 +429,11 @@ Read and follow all instructions below carefully.
 
     output.write(
         "Discover more via: "
-        "`python3 ./.rudder/scripts/get_context.py --mode packages`\n"
+        "`python3 ./.trellis/scripts/get_context.py --mode packages`\n"
     )
     output.write("</guidelines>\n\n")
 
-    task_status = _get_task_status(rudder_dir, hook_input)
+    task_status = _get_task_status(trellis_dir, hook_input)
     output.write(f"<task-status>\n{task_status}\n</task-status>\n\n")
 
     output.write("""<ready>

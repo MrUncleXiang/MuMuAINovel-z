@@ -23,7 +23,7 @@ hook entry point). Written to each platform's hooks directory via
 writeSharedHooks() at init time.
 
 Silent exit 0 cases (no output):
-  - No .rudder/ directory found (not a Rudder project)
+  - No .trellis/ directory found (not a Rudder project)
   - task.json malformed or missing status
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ message above this hook output, that message is your only job.
 - Ignore all Rudder workflow guidance below this notice.
 - Do NOT call task.py start, task.py add-context, or task.py archive.
 - Do NOT call wait_agent or spawn_agent.
-- Do NOT modify .rudder/tasks/* or any other file unless the parent message
+- Do NOT modify .trellis/tasks/* or any other file unless the parent message
   explicitly asks for that.
 
 If you are the main interactive Codex session and the user is typing at the
@@ -63,41 +63,41 @@ terminal with no parent agent, use the workflow guidance below normally.
 
 # Bootstrap notice for Codex while the session has no active task. Replaces the
 # heavyweight SessionStart context injection — instead of pushing 9.5 KB of
-# workflow text up front, we just nudge the AI to read the `rudder-start` skill once.
+# workflow text up front, we just nudge the AI to read the `trellis-start` skill once.
 # The nudge keeps showing up while status == "no_task" (cheap text, AI won't
 # re-read after the first time). Once a task is created the breadcrumb status
 # flips and this notice stops appearing automatically. Sub-agents are warded
 # off by the <sub-agent-notice> above plus the explicit exemption below.
-CODEX_NO_TASK_BOOTSTRAP_NOTICE = """<rudder-bootstrap>
+CODEX_NO_TASK_BOOTSTRAP_NOTICE = """<trellis-bootstrap>
 You are running in a Rudder-managed Codex session and there is no active task yet.
-If you have not already loaded Rudder context this session, read the `rudder-start` skill once:
+If you have not already loaded Rudder context this session, read the `trellis-start` skill once:
 
-  $rudder-start
+  $trellis-start
 
-(equivalent to reading `.agents/skills/rudder-start/SKILL.md` and following its Steps 1-3)
+(equivalent to reading `.agents/skills/trellis-start/SKILL.md` and following its Steps 1-3)
 
 The skill walks you through workflow.md, dev profile, git status, active tasks, and spec
 indexes. Then route the user's request per the <workflow-state> A/B/C rules below.
 
 Sub-agent exemption: if you are a sub-agent (spawned via spawn_agent with a parent task
-message), DO NOT read `$rudder-start`. Execute the parent message directly as instructed by the
+message), DO NOT read `$trellis-start`. Execute the parent message directly as instructed by the
 <sub-agent-notice> above.
-</rudder-bootstrap>"""
+</trellis-bootstrap>"""
 
 
 # ---------------------------------------------------------------------------
 # CWD-robust Rudder root discovery (fixes hook-path-robustness for this hook)
 # ---------------------------------------------------------------------------
 
-def find_rudder_root(start: Path) -> Optional[Path]:
-    """Walk up from start to find directory containing .rudder/.
+def find_trellis_root(start: Path) -> Optional[Path]:
+    """Walk up from start to find directory containing .trellis/.
 
     Handles CWD drift: subdirectory launches, monorepo packages, etc.
-    Returns None if no .rudder/ found (silent no-op).
+    Returns None if no .trellis/ found (silent no-op).
     """
     cur = start.resolve()
     while cur != cur.parent:
-        if (cur / ".rudder").is_dir():
+        if (cur / ".trellis").is_dir():
             return cur
         cur = cur.parent
     return None
@@ -144,7 +144,7 @@ def _detect_platform(input_data: dict) -> str | None:
 
 
 def _resolve_active_task(root: Path, input_data: dict):
-    scripts_dir = root / ".rudder" / "scripts"
+    scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     from common.active_task import resolve_active_task  # type: ignore[import-not-found]
@@ -199,7 +199,7 @@ def load_breadcrumbs(root: Path) -> dict[str, str]:
     in build_breadcrumb so users see the broken state and fix
     workflow.md, rather than the hook silently masking the issue.
     """
-    workflow = root / ".rudder" / "workflow.md"
+    workflow = root / ".trellis" / "workflow.md"
     if not workflow.is_file():
         return {}
     try:
@@ -216,21 +216,21 @@ def load_breadcrumbs(root: Path) -> dict[str, str]:
     return result
 
 
-def _read_rudder_config(root: Path) -> dict:
-    """Load .rudder/config.yaml via the bundled rudder_config helper.
+def _read_trellis_config(root: Path) -> dict:
+    """Load .trellis/config.yaml via the bundled trellis_config helper.
 
-    The helper lives in .rudder/scripts/common; the hook lives outside the
+    The helper lives in .trellis/scripts/common; the hook lives outside the
     scripts tree, so we extend sys.path before importing.
     """
-    scripts_dir = root / ".rudder" / "scripts"
+    scripts_dir = root / ".trellis" / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     try:
-        from common.rudder_config import read_rudder_config  # type: ignore[import-not-found]
+        from common.trellis_config import read_trellis_config  # type: ignore[import-not-found]
     except Exception:
         return {}
     try:
-        return read_rudder_config(root)
+        return read_trellis_config(root)
     except Exception:
         return {}
 
@@ -238,10 +238,10 @@ def _read_rudder_config(root: Path) -> dict:
 def _build_tool_paths_block(root: Path) -> str:
     """Build <tool-paths> block for per-turn breadcrumb."""
     try:
-        scripts_dir = root / ".rudder" / "scripts"
+        scripts_dir = root / ".trellis" / "scripts"
         if str(scripts_dir) not in sys.path:
             sys.path.insert(0, str(scripts_dir))
-        from common.rudder_config import resolve_tools  # type: ignore[import-not-found]
+        from common.trellis_config import resolve_tools  # type: ignore[import-not-found]
         tools = resolve_tools(root)
     except Exception:
         return ""
@@ -264,7 +264,7 @@ def _build_tool_paths_block(root: Path) -> str:
 def _codex_mode_banner(config: dict) -> str:
     """Emit a `<codex-mode>` banner for the additionalContext payload.
 
-    Reads `codex.dispatch_mode` from .rudder/config.yaml; defaults to
+    Reads `codex.dispatch_mode` from .trellis/config.yaml; defaults to
     `inline` when missing or invalid because Codex sub-agents run with
     `fork_turns="none"` isolation and can't inherit the parent session's
     task context. The banner makes the active mode explicit to Codex AI
@@ -289,7 +289,7 @@ def resolve_breadcrumb_key(
 
     Codex defaults to ``inline`` because sub-agents run with ``fork_turns="none"``
     isolation and can't inherit the parent session's task context. Users can
-    opt into ``codex.dispatch_mode: sub-agent`` in ``.rudder/config.yaml``
+    opt into ``codex.dispatch_mode: sub-agent`` in ``.trellis/config.yaml``
     to use the parallel ``<status>-inline`` tag → ``<status>`` flip. Invalid
     or missing values fall back to inline.
 
@@ -349,17 +349,17 @@ def main() -> int:
     cwd_str = data.get("cwd") or os.getcwd()
     cwd = Path(cwd_str)
 
-    root = find_rudder_root(cwd)
+    root = find_trellis_root(cwd)
     if root is None:
         return 0  # not a Rudder project
 
     templates = load_breadcrumbs(root)
     platform = _detect_platform(data)
-    config = _read_rudder_config(root)
+    config = _read_trellis_config(root)
     task = get_active_task(root, data)
     if task is None:
         # No active task — still emit a breadcrumb nudging AI toward
-        # rudder-brainstorm + task.py create when user describes real work.
+        # trellis-brainstorm + task.py create when user describes real work.
         no_task_key = resolve_breadcrumb_key("no_task", platform, config)
         breadcrumb = build_breadcrumb(
             None, "no_task", templates, breadcrumb_key=no_task_key

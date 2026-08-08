@@ -185,8 +185,8 @@ def _detect_platform(input_data: dict) -> str | None:
     return None
 
 
-def _resolve_context_key(rudder_dir: Path, input_data: dict) -> str | None:
-    scripts_dir = rudder_dir / "scripts"
+def _resolve_context_key(trellis_dir: Path, input_data: dict) -> str | None:
+    scripts_dir = trellis_dir / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     from common.active_task import resolve_context_key  # type: ignore[import-not-found]
@@ -214,14 +214,14 @@ def _persist_context_key_for_bash(context_key: str | None) -> None:
         pass
 
 
-def _resolve_active_task(rudder_dir: Path, input_data: dict):
-    scripts_dir = rudder_dir / "scripts"
+def _resolve_active_task(trellis_dir: Path, input_data: dict):
+    scripts_dir = trellis_dir / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     from common.active_task import resolve_active_task  # type: ignore[import-not-found]
 
     return resolve_active_task(
-        rudder_dir.parent,
+        trellis_dir.parent,
         input_data,
         platform=_detect_platform(input_data),
     )
@@ -271,22 +271,22 @@ def _normalize_task_ref(task_ref: str) -> str:
         normalized = normalized[2:]
 
     if normalized.startswith("tasks/"):
-        return f".rudder/{normalized}"
+        return f".trellis/{normalized}"
 
     return normalized
 
 
-def _resolve_task_dir(rudder_dir: Path, task_ref: str) -> Path:
+def _resolve_task_dir(trellis_dir: Path, task_ref: str) -> Path:
     normalized = _normalize_task_ref(task_ref)
     path_obj = Path(normalized)
     if path_obj.is_absolute():
         return path_obj
-    if normalized.startswith(".rudder/"):
-        return rudder_dir.parent / path_obj
-    return rudder_dir / "tasks" / path_obj
+    if normalized.startswith(".trellis/"):
+        return trellis_dir.parent / path_obj
+    return trellis_dir / "tasks" / path_obj
 
 
-def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
+def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
     """Check current task status and return structured status string with explicit next action.
 
     Returns a block with three fields:
@@ -294,33 +294,33 @@ def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
     - Task: task identifier (when applicable)
     - Next-Action: explicit skill/command/tool call the AI should invoke
     """
-    active = _resolve_active_task(rudder_dir, input_data)
+    active = _resolve_active_task(trellis_dir, input_data)
 
     # Case 1: No active task — waiting for user to describe intent
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
             f"Source: {active.source}\n"
-            "Next-Action: After the user describes their intent, load skill `rudder-brainstorm` "
-            "to clarify requirements and create a task via `python3 ./.rudder/scripts/task.py create`.\n"
+            "Next-Action: After the user describes their intent, load skill `trellis-brainstorm` "
+            "to clarify requirements and create a task via `python3 ./.trellis/scripts/task.py create`.\n"
             "Research reminder: for research-heavy tasks (comparing tools, reading external docs, "
-            "cross-platform surveys), spawn `rudder-research` sub-agents via the Task tool — "
+            "cross-platform surveys), spawn `trellis-research` sub-agents via the Task tool — "
             "they persist findings to `{TASK_DIR}/research/*.md` and keep main context clean. "
             "Do NOT do 10+ inline WebFetch/WebSearch in the main conversation.\n"
             "User override (per-turn escape hatch): if the user's first message explicitly opts "
-            "out of the workflow (\"跳过 rudder\" / \"别走流程\" / \"小修一下\" / \"直接改\" / "
-            "\"skip rudder\" / \"no task\" / \"just do it\"), honor it for this turn — "
+            "out of the workflow (\"跳过 trellis\" / \"别走流程\" / \"小修一下\" / \"直接改\" / "
+            "\"skip trellis\" / \"no task\" / \"just do it\"), honor it for this turn — "
             "acknowledge briefly and proceed without creating a task. Per-turn only."
         )
 
     # Case 2: Stale pointer — task dir was deleted
     task_ref = active.task_path
-    task_dir = _resolve_task_dir(rudder_dir, task_ref)
+    task_dir = _resolve_task_dir(trellis_dir, task_ref)
     if active.stale or not task_dir.is_dir():
         return (
             f"Status: STALE POINTER\nTask: {task_ref}\n"
             f"Source: {active.source}\n"
-            f"Next-Action: Run `python3 ./.rudder/scripts/task.py finish` to clear the stale pointer, "
+            f"Next-Action: Run `python3 ./.trellis/scripts/task.py finish` to clear the stale pointer, "
             "then ask the user what to work on next."
         )
 
@@ -341,8 +341,8 @@ def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
         return (
             f"Status: COMPLETED\nTask: {task_title}\n"
             f"Source: {active.source}\n"
-            f"Next-Action: Load skill `rudder-update-spec` to capture learnings, "
-            f"then archive with `python3 ./.rudder/scripts/task.py archive {task_dir.name}`."
+            f"Next-Action: Load skill `trellis-update-spec` to capture learnings, "
+            f"then archive with `python3 ./.trellis/scripts/task.py archive {task_dir.name}`."
         )
 
     has_prd = (task_dir / "prd.md").is_file()
@@ -352,10 +352,10 @@ def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
         return (
             f"Status: PLANNING\nTask: {task_title}\n"
             f"Source: {active.source}\n"
-            "Next-Action: Load skill `rudder-brainstorm` to clarify requirements with the user "
+            "Next-Action: Load skill `trellis-brainstorm` to clarify requirements with the user "
             "and produce prd.md in the task directory.\n"
             "Research reminder: when the task needs external research (tool comparison, docs, "
-            "conventions survey), spawn `rudder-research` sub-agents — don't WebFetch/WebSearch "
+            "conventions survey), spawn `trellis-research` sub-agents — don't WebFetch/WebSearch "
             "inline in the main session. Findings go to `{task_dir}/research/*.md`; PRD only links to them."
         )
 
@@ -366,25 +366,25 @@ def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
             f"Status: PLANNING (Phase 1.3)\nTask: {task_title}\n"
             f"Source: {active.source}\n"
             "Next-Action: Curate `implement.jsonl` and `check.jsonl` with the spec + research files "
-            "the Phase 2 sub-agents will need. Only spec paths (`.rudder/spec/**/*.md`) and research "
+            "the Phase 2 sub-agents will need. Only spec paths (`.trellis/spec/**/*.md`) and research "
             "files (`{TASK_DIR}/research/*.md`) — no code paths. Run "
-            "`python3 ./.rudder/scripts/get_context.py --mode packages` to list available specs, "
-            "then edit the jsonl files or use `python3 ./.rudder/scripts/task.py add-context`. "
-            "See `.rudder/workflow.md` Phase 1.3 for details."
+            "`python3 ./.trellis/scripts/get_context.py --mode packages` to list available specs, "
+            "then edit the jsonl files or use `python3 ./.trellis/scripts/task.py add-context`. "
+            "See `.trellis/workflow.md` Phase 1.3 for details."
         )
 
     # Case 5: PRD + curated jsonl (or agent-less platform with no jsonl) — enter Execute phase
     return (
         f"Status: READY\nTask: {task_title}\n"
         f"Source: {active.source}\n"
-        "Next required action: dispatch `rudder-implement` per Phase 2.1. "
+        "Next required action: dispatch `trellis-implement` per Phase 2.1. "
         "For agent-capable platforms, the default is to NOT edit code in the main session. "
-        "After implementation, dispatch `rudder-check` per Phase 2.2 before reporting completion.\n"
-        "Sub-agent roster: `rudder-implement` (writes code), `rudder-check` (verifies + self-fixes), "
-        "`rudder-research` (persists findings to `research/*.md` — use when you'd otherwise do "
+        "After implementation, dispatch `trellis-check` per Phase 2.2 before reporting completion.\n"
+        "Sub-agent roster: `trellis-implement` (writes code), `trellis-check` (verifies + self-fixes), "
+        "`trellis-research` (persists findings to `research/*.md` — use when you'd otherwise do "
         "multiple WebFetch/WebSearch inline).\n"
-        "Sub-agent self-exemption: if you are reading this as a `rudder-implement` or "
-        "`rudder-check` sub-agent (your own role / agent name reflects that), this dispatch "
+        "Sub-agent self-exemption: if you are reading this as a `trellis-implement` or "
+        "`trellis-check` sub-agent (your own role / agent name reflects that), this dispatch "
         "instruction does NOT apply to you — you are already the dispatched sub-agent. "
         "Implement / check directly without spawning another sub-agent of the same kind.\n"
         "User override (per-turn escape hatch): if the user's CURRENT message explicitly tells the "
@@ -394,13 +394,13 @@ def _get_task_status(rudder_dir: Path, input_data: dict) -> str:
     )
 
 
-def _load_rudder_config(rudder_dir: Path, input_data: dict) -> tuple:
+def _load_trellis_config(trellis_dir: Path, input_data: dict) -> tuple:
     """Load Rudder config for session-start decisions.
 
     Returns:
         (is_mono, packages_dict, spec_scope, task_pkg, default_pkg)
     """
-    scripts_dir = rudder_dir / "scripts"
+    scripts_dir = trellis_dir / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
 
@@ -408,7 +408,7 @@ def _load_rudder_config(rudder_dir: Path, input_data: dict) -> tuple:
         from common.config import get_default_package, get_packages, get_spec_scope, is_monorepo  # type: ignore[import-not-found]
         from common.paths import get_current_task  # type: ignore[import-not-found]
 
-        repo_root = rudder_dir.parent
+        repo_root = trellis_dir.parent
         is_mono = is_monorepo(repo_root)
         packages = get_packages(repo_root) or {}
         scope = get_spec_scope(repo_root)
@@ -438,7 +438,7 @@ def _load_rudder_config(rudder_dir: Path, input_data: dict) -> tuple:
         return False, {}, None, None, None
 
 
-def _check_legacy_spec(rudder_dir: Path, is_mono: bool, packages: dict) -> str | None:
+def _check_legacy_spec(trellis_dir: Path, is_mono: bool, packages: dict) -> str | None:
     """Check for legacy spec directory structure in monorepo.
 
     Returns warning message if legacy structure detected, None otherwise.
@@ -446,7 +446,7 @@ def _check_legacy_spec(rudder_dir: Path, is_mono: bool, packages: dict) -> str |
     if not is_mono or not packages:
         return None
 
-    spec_dir = rudder_dir / "spec"
+    spec_dir = trellis_dir / "spec"
     if not spec_dir.is_dir():
         return None
 
@@ -484,11 +484,11 @@ def _check_legacy_spec(rudder_dir: Path, is_mono: bool, packages: dict) -> str |
     )
 
 
-def _build_tool_paths_block(rudder_dir: Path) -> str:
+def _build_tool_paths_block(trellis_dir: Path) -> str:
     """Build <tool-paths> block for session-start context."""
-    repo_root = rudder_dir.parent
+    repo_root = trellis_dir.parent
     try:
-        from common.rudder_config import resolve_tools  # type: ignore[import-not-found]
+        from common.trellis_config import resolve_tools  # type: ignore[import-not-found]
         tools = resolve_tools(repo_root)
     except Exception:
         return ""
@@ -505,7 +505,7 @@ def _build_tool_paths_block(rudder_dir: Path) -> str:
             parts.append(f"(required version: {version})")
         lines.append(f"- {name}: {' '.join(parts)}")
     lines.append("")
-    lines.append("If a tool is missing or the path is wrong, locate the correct path and update `.rudder/config_local.yml`.")
+    lines.append("If a tool is missing or the path is wrong, locate the correct path and update `.trellis/config_local.yml`.")
     lines.append("</tool-paths>")
     return "\n".join(lines)
 
@@ -636,7 +636,7 @@ def _build_workflow_overview(workflow_path: Path) -> str:
 
     out_lines = [
         "# Development Workflow — Section Index",
-        "Full guide: .rudder/workflow.md  (read on demand)",
+        "Full guide: .trellis/workflow.md  (read on demand)",
         "",
         "## Table of Contents",
     ]
@@ -691,13 +691,13 @@ def main():
     if project_dir is None:
         project_dir = Path(_normalize_windows_shell_path(hook_input.get("cwd", "."))).resolve()
 
-    rudder_dir = project_dir / ".rudder"
-    context_key = _resolve_context_key(rudder_dir, hook_input)
+    trellis_dir = project_dir / ".trellis"
+    context_key = _resolve_context_key(trellis_dir, hook_input)
     _persist_context_key_for_bash(context_key)
 
     # Load config for scope filtering and legacy detection
-    is_mono, packages, scope_config, task_pkg, default_pkg = _load_rudder_config(
-        rudder_dir,
+    is_mono, packages, scope_config, task_pkg, default_pkg = _load_trellis_config(
+        trellis_dir,
         hook_input,
     )
     allowed_pkgs = _resolve_spec_scope(is_mono, packages, scope_config, task_pkg, default_pkg)
@@ -714,17 +714,17 @@ Read and follow all instructions below carefully.
     output.write("\n\n")
 
     # Legacy migration warning
-    legacy_warning = _check_legacy_spec(rudder_dir, is_mono, packages)
+    legacy_warning = _check_legacy_spec(trellis_dir, is_mono, packages)
     if legacy_warning:
         output.write(f"<migration-warning>\n{legacy_warning}\n</migration-warning>\n\n")
 
     output.write("<current-state>\n")
-    context_script = rudder_dir / "scripts" / "get_context.py"
+    context_script = trellis_dir / "scripts" / "get_context.py"
     output.write(run_script(context_script, context_key))
     output.write("\n</current-state>\n\n")
 
     output.write("<workflow>\n")
-    output.write(_build_workflow_overview(rudder_dir / "workflow.md"))
+    output.write(_build_workflow_overview(trellis_dir / "workflow.md"))
     output.write("\n</workflow>\n\n")
 
     output.write("<guidelines>\n")
@@ -736,18 +736,18 @@ Read and follow all instructions below carefully.
         "or loaded by the sub-agent via `{task}/implement.jsonl` / `check.jsonl`. "
         "You do NOT need to read these indexes yourself.\n"
         "- For agent-capable platforms, the default is to dispatch "
-        "`rudder-implement` and `rudder-check` (so JSONL context is loaded by "
+        "`trellis-implement` and `trellis-check` (so JSONL context is loaded by "
         "the sub-agents) rather than editing code in the main session. "
         "Honor a per-turn user override only if the user's current message "
         "explicitly opts out (see <task-status> below for override phrases).\n"
-        "- Sub-agent self-exemption: if you are reading this as a `rudder-implement` "
-        "or `rudder-check` sub-agent, the \"dispatch rudder-implement / rudder-check\" "
+        "- Sub-agent self-exemption: if you are reading this as a `trellis-implement` "
+        "or `trellis-check` sub-agent, the \"dispatch trellis-implement / trellis-check\" "
         "rule above does NOT apply to you — you are already the dispatched sub-agent. "
         "Do NOT spawn another sub-agent of the same kind; implement / check directly.\n\n"
     )
 
     # guides/ is cross-package thinking — always include inline (small, broadly useful)
-    guides_index = rudder_dir / "spec" / "guides" / "index.md"
+    guides_index = trellis_dir / "spec" / "guides" / "index.md"
     if guides_index.is_file():
         output.write("## guides (inlined — cross-package thinking guides)\n")
         output.write(read_file(guides_index))
@@ -756,7 +756,7 @@ Read and follow all instructions below carefully.
     # Other spec indexes — paths only (main agent reads on demand;
     # sub-agents get their specific specs via jsonl injection)
     paths: list[str] = []
-    spec_dir = rudder_dir / "spec"
+    spec_dir = trellis_dir / "spec"
     if spec_dir.is_dir():
         for sub in sorted(spec_dir.iterdir()):
             if not sub.is_dir() or sub.name.startswith("."):
@@ -767,7 +767,7 @@ Read and follow all instructions below carefully.
             index_file = sub / "index.md"
             if index_file.is_file():
                 # Flat spec dir (single-repo layer like spec/backend/)
-                paths.append(f".rudder/spec/{sub.name}/index.md")
+                paths.append(f".trellis/spec/{sub.name}/index.md")
             else:
                 # Nested package dirs (monorepo: spec/<pkg>/<layer>/index.md)
                 # Apply scope filter
@@ -779,7 +779,7 @@ Read and follow all instructions below carefully.
                     nested_index = nested / "index.md"
                     if nested_index.is_file():
                         paths.append(
-                            f".rudder/spec/{sub.name}/{nested.name}/index.md"
+                            f".trellis/spec/{sub.name}/{nested.name}/index.md"
                         )
 
     if paths:
@@ -790,18 +790,18 @@ Read and follow all instructions below carefully.
 
     output.write(
         "Discover more via: "
-        "`python3 ./.rudder/scripts/get_context.py --mode packages`\n"
+        "`python3 ./.trellis/scripts/get_context.py --mode packages`\n"
     )
     output.write("</guidelines>\n\n")
 
     # Tool paths block
-    tool_paths_block = _build_tool_paths_block(rudder_dir)
+    tool_paths_block = _build_tool_paths_block(trellis_dir)
     if tool_paths_block:
         output.write(tool_paths_block)
         output.write("\n\n")
 
     # Check task status and inject structured tag
-    task_status = _get_task_status(rudder_dir, hook_input)
+    task_status = _get_task_status(trellis_dir, hook_input)
     output.write(f"<task-status>\n{task_status}\n</task-status>\n\n")
 
     output.write("""<ready>
