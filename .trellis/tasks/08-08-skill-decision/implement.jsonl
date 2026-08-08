@@ -1,0 +1,2 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-08-skill-decision/prd.md", "reason": "PRD: 网文工坊技能引入（A2全装33/B1暂缓多选/C2维持天命禁用）"}
