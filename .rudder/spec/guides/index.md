@@ -24,6 +24,7 @@ These guides help you **ask the right questions before coding**.
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Pipeline Data Integrity Guide](./pipeline-data-integrity-guide.md) | Keep book/pipeline data complete; avoid half-built books | Creating projects, one-click book, test data, connecting pipeline to existing books |
+| [Skill Workflow Plan](./skill-workflow-plan.md) | SKILL 体系审查与流程修改方案（网文工坊引入、多技能、模板治理） | 技能体系相关改动前必读 |
 
 ---
 
