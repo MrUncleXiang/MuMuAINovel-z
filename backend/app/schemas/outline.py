@@ -56,6 +56,7 @@ class OutlineGenerateRequest(BaseModel):
     provider: Optional[str] = Field(None, description="AI提供商")
     model: Optional[str] = Field(None, description="AI模型")
     provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导大纲生成")
     
     # 续写相关参数
     mode: str = Field("auto", description="生成模式: auto(自动判断), new(全新生成), continue(续写)")

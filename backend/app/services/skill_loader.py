@@ -239,6 +239,30 @@ def load_skills() -> List[Dict]:
     return skills
 
 
+def build_skill_system_prompt(skill_key: Optional[str]) -> Optional[str]:
+    """
+    根据 skill_key 构造 Skill 系统提示词（供章节/大纲等生成路径注入）。
+
+    Args:
+        skill_key: Skill 模板键名（如 SKILL_OUTLINE），未指定或未找到返回 None
+
+    Returns:
+        Skill 工作流系统提示词，未指定/未找到返回 None
+    """
+    if not skill_key:
+        return None
+    skills = get_all_skills_cached()
+    skill = next((s for s in skills if s["template_key"] == skill_key), None)
+    if not skill:
+        logger.warning(f"⚠️ 未找到 Skill: {skill_key}")
+        return None
+    return (
+        f"【⚡ Skill 工作流：{skill['template_name']}】\n\n"
+        f"{skill['content']}\n\n"
+        "⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"
+    )
+
+
 def get_skill_by_trigger(user_input: str) -> Optional[Dict]:
     """
     根据用户输入匹配对应的 Skill

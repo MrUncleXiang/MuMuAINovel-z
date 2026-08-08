@@ -13,6 +13,10 @@ from app.models.project import Project
 from app.schemas.llm_comparison import LLMComparisonBatchCreate, LLMComparisonSelection
 from app.schemas.outline import OutlineComparisonCreateRequest
 from app.services.llm_comparison_service import CandidateGenerationResult, create_batch
+from app.services.skill_loader import build_skill_system_prompt
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 from app.services.prompt_service import PromptService
 
 
@@ -150,13 +154,20 @@ async def generate_outline_candidate(
         enable_mcp=bool((batch.parameters_snapshot or {}).get("auto_mcp", True)),
     )
     started = perf_counter()
+    # ⚡ Skill 支持：从 batch 快照取 skill_key（候选生成时无 payload 对象），注入系统提示词
+    snapshot = batch.input_snapshot or {}
+    request_snapshot = snapshot.get("request") or {}
+    skill_key = request_snapshot.get("skill_key")
+    system_prompt = build_skill_system_prompt(skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词（多模型比较候选）")
     result = await service.generate_text(
         prompt=batch.prompt_snapshot,
         model=candidate.model,
+        system_prompt=system_prompt,
         auto_mcp=bool((batch.parameters_snapshot or {}).get("auto_mcp", True)),
     )
     raw = str(result.get("content") or "")
-    snapshot = batch.input_snapshot or {}
     outlines = _normalize_outline_data(
         _parse_ai_response(raw, raise_on_error=True),
         expected_count=int(snapshot["chapter_count"]),

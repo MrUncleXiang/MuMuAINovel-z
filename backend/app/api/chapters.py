@@ -1436,29 +1436,20 @@ async def generate_chapter_content_stream(
                 # 🎨 方案一：将写作风格注入到系统提示词（最高优先级）
                 system_prompt_with_style = None
                 
-                # ⚡ Skill 支持：当指定 skill_key 时，将 Skill 工作流注入系统提示词
+                # ⚡ Skill 支持：当指定 skill_key 时，将 Skill 工作流注入系统提示词（公共函数，与大纲生成共用）
                 if skill_key:
                     try:
-                        from app.services.skill_loader import get_all_skills_cached
-                        skills = get_all_skills_cached()
-                        skill = next((s for s in skills if s["template_key"] == skill_key), None)
-                        if skill:
-                            skill_content = skill["content"]
-                            skill_name = skill["template_name"]
-                            system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
-
-{skill_content}
-
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
+                        from app.services.skill_loader import build_skill_system_prompt
+                        skill_prompt = build_skill_system_prompt(skill_key)
+                        if skill_prompt:
+                            system_prompt_with_style = skill_prompt
                             if style_content:
                                 system_prompt_with_style += f"""
 
 【🎨 写作风格要求 - 补充】
 
 {style_content}"""
-                            logger.info(f"⚡ 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-                        else:
-                            logger.warning(f"⚠️ 未找到 Skill: {skill_key}")
+                            logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词")
                     except Exception as skill_err:
                         logger.warning(f"⚠️ 加载 Skill 失败: {skill_err}")
                 

@@ -595,6 +595,7 @@ export interface GenerateOutlineRequest {
   story_direction?: string;
   plot_stage?: 'development' | 'climax' | 'ending';
   keep_existing?: boolean;
+  skill_key?: string;
 }
 
 // 大纲重排序请求类型

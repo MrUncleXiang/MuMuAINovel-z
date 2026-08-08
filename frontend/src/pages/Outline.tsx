@@ -9,6 +9,7 @@ import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import AIServiceSelector from '../components/AIServiceSelector';
+import SkillSelector from '../components/SkillSelector';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
@@ -28,6 +29,7 @@ interface OutlineGenerateRequestData {
   model?: string;
   provider?: string;
   provider_config_id?: string;
+  skill_key?: string;
 }
 
 // 角色/组织条目类型（新格式）
@@ -122,6 +124,7 @@ export default function Outline() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
   const [outlineGenerationMode, setOutlineGenerationMode] = useState<'single' | 'compare'>('single');
+  const [outlineSkillKey, setOutlineSkillKey] = useState<string | undefined>();
   const [outlineComparisonSelections, setOutlineComparisonSelections] = useState<LLMComparisonSelection[]>([]);
   const [outlineComparisonBatch, setOutlineComparisonBatch] = useState<LLMComparisonBatch | null>(null);
   const [outlineComparisonVisible, setOutlineComparisonVisible] = useState(false);
@@ -556,7 +559,8 @@ export default function Outline() {
         requirements: values.requirements,
         mode: values.mode || 'auto',
         story_direction: values.story_direction,
-        plot_stage: values.plot_stage || 'development'
+        plot_stage: values.plot_stage || 'development',
+        skill_key: outlineSkillKey,
       };
 
       // 只有在用户选择了模型时才添加model参数
@@ -640,6 +644,7 @@ export default function Outline() {
         mode: values.mode || 'auto',
         story_direction: values.story_direction,
         plot_stage: values.plot_stage || 'development',
+        skill_key: outlineSkillKey,
         selections: outlineComparisonSelections,
       });
       Modal.destroyAll();
@@ -690,6 +695,7 @@ export default function Outline() {
   const showGenerateModal = async () => {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
+    setOutlineSkillKey(undefined);
 
     // 预填默认服务商及其默认模型（当前 = OpenCode Go · deepseek-v4-flash），动态获取不硬编码
     let defaultSelection: { provider_config_id?: string; model?: string } = {};
@@ -738,6 +744,7 @@ export default function Outline() {
               onChange={value => setOutlineGenerationMode(value as 'single' | 'compare')}
             />
           </Form.Item>
+          <SkillSelector value={outlineSkillKey} onChange={setOutlineSkillKey} disabled={outlineComparisonBusy} />
           {hasOutlines && (
             <Form.Item
               label="生成模式"

@@ -30,6 +30,7 @@ from app.schemas.outline import (
 )
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
+from app.services.skill_loader import build_skill_system_prompt
 from app.services.prompt_service import prompt_service, PromptService
 from app.services.memory_service import memory_service
 from app.services.plot_expansion_service import PlotExpansionService
@@ -1161,6 +1162,11 @@ async def new_outline_generator(
         logger.info(f"=== 大纲生成AI调用参数 ===")
         logger.info(f"  provider参数: {provider_param}")
         logger.info(f"  model参数: {model_param}")
+        # ⚡ Skill 支持：构造系统提示词（首次与重试调用共用）
+        skill_key = data.get("skill_key")
+        system_prompt = build_skill_system_prompt(skill_key)
+        if system_prompt:
+            logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词")
         
         # ✅ 流式生成（带字数统计和进度）
         estimated_total = chapter_count * 1000
@@ -1173,6 +1179,7 @@ async def new_outline_generator(
             prompt=prompt,
             provider=provider_param,
             model=model_param,
+            system_prompt=system_prompt,
             auto_mcp=enable_mcp
         ):
             chunk_count += 1
@@ -1235,6 +1242,7 @@ async def new_outline_generator(
                     prompt=retry_prompt,
                     provider=provider_param,
                     model=model_param,
+                    system_prompt=system_prompt,
                     auto_mcp=enable_mcp
                 ):
                     chunk_count += 1
@@ -1622,6 +1630,11 @@ async def continue_outline_generator(
             logger.info(f"=== 续写批次{batch_num + 1} AI调用参数 ===")
             logger.info(f"  provider参数: {provider_param}")
             logger.info(f"  model参数: {model_param}")
+            # ⚡ Skill 支持：构造系统提示词（首次与重试调用共用）
+            skill_key = data.get("skill_key")
+            system_prompt = build_skill_system_prompt(skill_key)
+            if system_prompt:
+                logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词")
             
             # 流式生成并累积文本
             accumulated_text = ""
@@ -1631,6 +1644,7 @@ async def continue_outline_generator(
                 prompt=prompt,
                 provider=provider_param,
                 model=model_param,
+                system_prompt=system_prompt,
                 auto_mcp=data.get("enable_mcp", True)
             ):
                 chunk_count += 1
@@ -1695,6 +1709,7 @@ async def continue_outline_generator(
                         prompt=retry_prompt,
                         provider=provider_param,
                         model=model_param,
+                        system_prompt=system_prompt,
                         auto_mcp=data.get("enable_mcp", True)
                     ):
                         chunk_count += 1
@@ -2052,6 +2067,11 @@ async def _run_new_outline_bg(
 
     model_param = data.get("model")
     provider_param = data.get("provider")
+    # ⚡ Skill 支持：构造系统提示词（首次与重试调用共用）
+    skill_key = data.get("skill_key")
+    system_prompt = build_skill_system_prompt(skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词（后台任务）")
 
     estimated_total = chapter_count * 1000
     accumulated_text = ""
@@ -2060,7 +2080,7 @@ async def _run_new_outline_bg(
     await tracker.generating(current_chars=0, estimated_total=estimated_total)
 
     async for chunk in user_ai_service.generate_text_stream(
-        prompt=prompt, provider=provider_param, model=model_param, auto_mcp=data.get("enable_mcp", True)
+        prompt=prompt, provider=provider_param, model=model_param, system_prompt=system_prompt, auto_mcp=data.get("enable_mcp", True)
     ):
         chunk_count += 1
         accumulated_text += chunk
@@ -2098,7 +2118,7 @@ async def _run_new_outline_bg(
             accumulated_text = ""
             retry_prompt = prompt + "\n\n【重要提醒】请确保返回完整的JSON数组。"
             async for chunk in user_ai_service.generate_text_stream(
-                prompt=retry_prompt, provider=provider_param, model=model_param, auto_mcp=data.get("enable_mcp", True)
+                prompt=retry_prompt, provider=provider_param, model=model_param, system_prompt=system_prompt, auto_mcp=data.get("enable_mcp", True)
             ):
                 accumulated_text += chunk
             ai_content = accumulated_text
@@ -2283,6 +2303,11 @@ async def _run_continue_outline_bg(
             requirements=data.get("requirements", ""),
             mcp_references=""
         )
+        # ⚡ Skill 支持：构造系统提示词（首次与重试调用共用）
+        skill_key = data.get("skill_key")
+        system_prompt = build_skill_system_prompt(skill_key)
+        if system_prompt:
+            logger.info(f"⚡ 已将 Skill '{skill_key}' 注入系统提示词（后台续写）")
 
         accumulated_text = ""
         chunk_count = 0
@@ -2292,6 +2317,7 @@ async def _run_continue_outline_bg(
             prompt=prompt,
             provider=data.get("provider"),
             model=data.get("model"),
+            system_prompt=system_prompt,
             auto_mcp=data.get("enable_mcp", True)
         ):
             chunk_count += 1
@@ -2328,6 +2354,7 @@ async def _run_continue_outline_bg(
                     prompt=retry_prompt,
                     provider=data.get("provider"),
                     model=data.get("model"),
+                    system_prompt=system_prompt,
                     auto_mcp=data.get("enable_mcp", True)
                 ):
                     accumulated_text += chunk
