@@ -650,6 +650,9 @@ export const outlineApi = {
   aiDraft: (data: { project_id: string; order_index?: number; instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
     api.post<unknown, { order_index: number; title: string; content: string }>('/outlines/ai-draft', data),
 
+  aiReview: (outlineId: string, data: { instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
+    api.post<unknown, { review: string }>(`/outlines/${outlineId}/ai-review`, data),
+
   retryComparisonCandidate: (batchId: string, candidateId: string) =>
     api.post<unknown, import('../types').LLMComparisonCandidate>(`/outlines/comparison-batches/${batchId}/retry/${candidateId}`),
 

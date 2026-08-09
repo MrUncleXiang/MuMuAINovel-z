@@ -132,6 +132,19 @@ class OutlineAIDraftResponse(BaseModel):
     content: str = Field(..., description="建议内容")
 
 
+class OutlineAIReviewRequest(BaseModel):
+    """已展开章节 AI 点评请求模型（结果不入库，仅展示）"""
+    instruction: Optional[str] = Field(None, description="点评关注点，如：重点看节奏和爽点密度")
+    skill_key: Optional[str] = Field(None, description="Skill 标识，如 SKILL_REVIEW（整卷五维诊断）")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class OutlineAIReviewResponse(BaseModel):
+    """已展开章节 AI 点评响应模型（纯文本，不入库）"""
+    review: str = Field(..., description="AI 点评建议文本")
+
+
 class ChapterPlanItem(BaseModel):
     """单个章节规划项"""
     sub_index: int = Field(..., description="子章节序号", ge=1)

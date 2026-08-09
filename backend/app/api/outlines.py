@@ -25,6 +25,8 @@ from app.schemas.outline import (
     OutlineAIEditResponse,
     OutlineAIDraftRequest,
     OutlineAIDraftResponse,
+    OutlineAIReviewRequest,
+    OutlineAIReviewResponse,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -2071,6 +2073,99 @@ async def outline_ai_edit(
     await db.commit()
 
     return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"], scenes=parsed.get("scenes"), key_points=parsed.get("key_points"), emotion=parsed.get("emotion"), goal=parsed.get("goal"))
+
+
+@router.post("/{outline_id}/ai-review", response_model=OutlineAIReviewResponse, summary="已展开章节AI点评（不入库）")
+async def outline_ai_review(
+    outline_id: str,
+    payload: OutlineAIReviewRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """对已展开章节做 AI 整体点评（不写入数据库，弹窗展示）"""
+    user_id = getattr(request.state, 'user_id', None)
+    result = await db.execute(select(Outline).where(Outline.id == outline_id))
+    outline = result.scalar_one_or_none()
+    if not outline:
+        raise HTTPException(status_code=404, detail="大纲不存在")
+    await verify_project_access(outline.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == outline.project_id))
+    project = project_result.scalar_one_or_none()
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == outline.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(select(Character).where(Character.project_id == outline.project_id))).all())
+    chapters = list((await db.scalars(
+        select(Chapter).where(Chapter.outline_id == outline_id).order_by(Chapter.sub_index)
+    )).all())
+
+    # 构造各章节章纲详情
+    chapter_lines = []
+    for ch in chapters:
+        plan = {}
+        if ch.expansion_plan:
+            try:
+                plan = json.loads(ch.expansion_plan)
+            except Exception:
+                plan = {}
+        scenes = plan.get("scenes") or []
+        scenes_text = "、".join(str(s) for s in scenes) if scenes else "（无）"
+        chapter_lines.append(
+            f"第{ch.sub_index}章《{ch.title}》\n"
+            f"  叙事目标：{plan.get('narrative_goal') or ch.summary or '（无）'}\n"
+            f"  关键事件：{'；'.join(str(k) for k in (plan.get('key_events') or [])) or '（无）'}\n"
+            f"  涉及角色：{'、'.join(str(c) for c in (plan.get('character_focus') or [])) or '（无）'}\n"
+            f"  情感基调：{plan.get('emotional_tone') or '（无）'}\n"
+            f"  场景：{scenes_text}\n"
+            f"  预计字数：{plan.get('estimated_words') or ch.word_count or '（未定）'}"
+        )
+    chapters_detail = "\n".join(chapter_lines) if chapter_lines else "（尚未展开章节）"
+
+    template = await PromptService.get_template("OUTLINE_AI_REVIEW", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title if project else "未命名",
+        theme=(project.theme if project else None) or "未设定",
+        genre=(project.genre if project else None) or "通用",
+        narrative_perspective=(project.narrative_perspective if project else None) or "第三人称",
+        time_period=(project.world_time_period if project else None) or "未设定",
+        location=(project.world_location if project else None) or "未设定",
+        atmosphere=(project.world_atmosphere if project else None) or "未设定",
+        rules=(project.world_rules if project else None) or "未设定",
+        characters_info=_build_characters_info(characters) or "暂无角色信息",
+        order_index=outline.order_index,
+        outline_title=outline.title,
+        outline_content=outline.content or "",
+        chapter_count=len(chapters),
+        chapters_detail=chapters_detail,
+        neighbors=_build_neighbors_text(outlines, outline.order_index),
+        instruction=payload.instruction or "整体质量与改进空间",
+    )
+    system_prompt = build_skill_system_prompt(payload.skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（AI点评）")
+
+    from app.services.ai_provider_service import create_routed_ai_service
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="outline",
+        provider_config_id=payload.provider_config_id, model=payload.model,
+        project_id=outline.project_id,
+    )
+    result_text = await service.generate_text(prompt=prompt, system_prompt=system_prompt, auto_mcp=False)
+    raw = str(result_text.get("content") or "").strip()
+    if not raw:
+        raise HTTPException(status_code=502, detail="AI 返回内容为空")
+
+    db.add(GenerationHistory(
+        project_id=outline.project_id,
+        prompt=prompt,
+        generated_content=raw,
+        model=payload.model or "default",
+    ))
+    await db.commit()
+
+    return OutlineAIReviewResponse(review=raw)
 
 
 @router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")

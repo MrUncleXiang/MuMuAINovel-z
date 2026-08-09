@@ -679,6 +679,66 @@ class PromptService:
 </context>
 """
     
+    # 已展开章节 AI 点评提示词（展开信息弹窗使用，纯文本输出）
+    OUTLINE_AI_REVIEW = """<system>
+你是资深网文编辑和审稿人，擅长对分卷章节大纲做质量点评与改进建议。
+</system>
+
+<task>
+【任务】
+对以下分卷大纲的展开结果做整体点评。
+
+【点评结构】
+1. 总体评价：章节数是否合理、节奏分布、悬念与伏笔铺设、爽点密度
+2. 逐章简评：每章 1-2 句（亮点与问题）
+3. 发现的问题：重复、断层、伏笔缺失、角色利用不足、冲突不够等
+4. 改进建议：3-5 条可执行的具体建议
+
+【点评要求】
+- 建设性、具体、不空泛；避免套话
+- 基于给出的章纲事实点评，不要臆造剧情
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<outline_context priority="P0">
+【本卷大纲】
+第{order_index}条《{outline_title}》：{outline_content}
+
+【已展开章节（共{chapter_count}章）】
+{chapters_detail}
+</outline_context>
+
+<neighbors priority="P2">
+【相邻大纲】
+{neighbors}
+</neighbors>
+
+<user_input priority="P2">
+【用户关注点】
+{instruction}
+</user_input>
+"""
+    
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
 你是《{project_title}》的作者，一位专注于{genre}类型的网络小说家。
@@ -3070,6 +3130,15 @@ class PromptService:
                 "description": "单条大纲AI起草（创建弹窗，结果回填表单不入库）",
                 "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
                              "location", "atmosphere", "rules", "characters_info", "order_index", 
+                             "neighbors", "instruction"]
+            },
+            "OUTLINE_AI_REVIEW": {
+                "name": "展开章节AI点评",
+                "category": "大纲生成",
+                "description": "已展开章节整体AI点评建议（展开信息弹窗，纯文本不入库）",
+                "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
+                             "location", "atmosphere", "rules", "characters_info", "order_index", 
+                             "outline_title", "outline_content", "chapter_count", "chapters_detail", 
                              "neighbors", "instruction"]
             },
             "CHAPTER_GENERATION_ONE_TO_MANY": {

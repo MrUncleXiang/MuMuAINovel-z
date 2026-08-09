@@ -929,7 +929,7 @@ export default function Outline() {
       // 第一步：检查是否已有展开的章节
       const existingChapters = await outlineApi.getOutlineChapters(outlineId);
 
-      if (existingChapters.has_chapters && existingChapters.expansion_plans && existingChapters.expansion_plans.length > 0) {
+      if (existingChapters && existingChapters.has_chapters && existingChapters.expansion_plans && existingChapters.expansion_plans.length > 0) {
         // 如果已有章节，显示已有的展开规划信息
         setIsExpanding(false);
         showExistingExpansionPreview(outlineTitle, existingChapters);
@@ -1028,7 +1028,9 @@ export default function Outline() {
       });
     } catch (error) {
       console.error('检查章节失败:', error);
-      message.error('检查章节失败');
+      // 显示具体错误便于定位（网络截断/解析失败/数据异常等）
+      const errDetail = error instanceof Error ? error.message : String(error);
+      message.error(`检查章节失败：${errDetail}`);
       setIsExpanding(false);
     }
   };
@@ -1059,6 +1061,7 @@ export default function Outline() {
   const showExistingExpansionPreview = (
     outlineTitle: string,
     data: {
+      outline_id: string;
       chapter_count: number;
       chapters: Array<{ id: string; chapter_number: number; title: string }>;
       expansion_plans: Array<{
@@ -1140,6 +1143,7 @@ export default function Outline() {
       ),
       content: (
         <div>
+          <ExpandReviewSection outlineId={data.outline_id} />
           <div style={{ marginBottom: 16 }}>
             <Space wrap style={{ maxWidth: '100%' }}>
               <Tag
@@ -1269,39 +1273,50 @@ export default function Outline() {
                     {plan.scenes && plan.scenes.length > 0 && (
                       <Card size="small" title="场景">
                         <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                          {plan.scenes.map((scene, sceneIdx) => (
-                            <Card
-                              key={sceneIdx}
-                              size="small"
-                              style={{
-                                backgroundColor: token.colorFillQuaternary,
-                                maxWidth: '100%',
-                                overflow: 'hidden'
-                              }}
-                            >
-                              <div style={{
-                                wordBreak: 'break-word',
-                                whiteSpace: 'normal',
-                                overflowWrap: 'break-word'
-                              }}>
-                                <strong>地点：</strong>{scene.location}
-                              </div>
-                              <div style={{
-                                wordBreak: 'break-word',
-                                whiteSpace: 'normal',
-                                overflowWrap: 'break-word'
-                              }}>
-                                <strong>角色：</strong>{scene.characters.join('、')}
-                              </div>
-                              <div style={{
-                                wordBreak: 'break-word',
-                                whiteSpace: 'normal',
-                                overflowWrap: 'break-word'
-                              }}>
-                                <strong>目的：</strong>{scene.purpose}
-                              </div>
-                            </Card>
-                          ))}
+                          {plan.scenes.map((scene, sceneIdx) => {
+                            // 兼容两种格式：字符串（'地点'）或对象（{location, characters, purpose}）
+                            const isObj = typeof scene === 'object' && scene !== null;
+                            const sceneLoc = isObj ? (scene as { location?: string }).location : String(scene);
+                            const sceneChars = isObj ? ((scene as { characters?: string[] }).characters || []) : [];
+                            const scenePurpose = isObj ? (scene as { purpose?: string }).purpose : '';
+                            return (
+                              <Card
+                                key={sceneIdx}
+                                size="small"
+                                style={{
+                                  backgroundColor: token.colorFillQuaternary,
+                                  maxWidth: '100%',
+                                  overflow: 'hidden'
+                                }}
+                              >
+                                <div style={{
+                                  wordBreak: 'break-word',
+                                  whiteSpace: 'normal',
+                                  overflowWrap: 'break-word'
+                                }}>
+                                  <strong>地点：</strong>{sceneLoc || '—'}
+                                </div>
+                                {sceneChars.length > 0 && (
+                                  <div style={{
+                                    wordBreak: 'break-word',
+                                    whiteSpace: 'normal',
+                                    overflowWrap: 'break-word'
+                                  }}>
+                                    <strong>角色：</strong>{sceneChars.join('、')}
+                                  </div>
+                                )}
+                                {scenePurpose && (
+                                  <div style={{
+                                    wordBreak: 'break-word',
+                                    whiteSpace: 'normal',
+                                    overflowWrap: 'break-word'
+                                  }}>
+                                    <strong>目的：</strong>{scenePurpose}
+                                  </div>
+                                )}
+                              </Card>
+                            );
+                          })}
                         </Space>
                       </Card>
                     )
@@ -2675,6 +2690,73 @@ function DraftOutlineAISection({ form, projectId, onRunningChange }: { form: For
           AI 起草
         </Button>
       </Space>
+    </>
+  );
+}
+
+// AI 点评建议（展开信息弹窗内子组件，自持状态）
+function ExpandReviewSection({ outlineId }: { outlineId: string }) {
+  const { token } = theme.useToken();
+  const [instruction, setInstruction] = useState('');
+  const [skillKey, setSkillKey] = useState<string | undefined>();
+  const [selection, setSelection] = useState<AIServiceSelection | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [review, setReview] = useState<string | null>(null);
+
+  const handleReview = async () => {
+    setLoading(true);
+    try {
+      const res = await outlineApi.aiReview(outlineId, {
+        instruction: instruction.trim() || undefined,
+        skill_key: skillKey,
+        provider_config_id: selection?.provider_config_id,
+        model: selection?.model,
+      });
+      setReview(res.review);
+      message.success('AI 点评完成');
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || 'AI 点评失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Divider style={{ margin: '0 0 12px' }}>🤖 AI 点评建议（基于已展开章节整体分析）</Divider>
+      <TextArea
+        rows={1}
+        placeholder="点评关注点（可选）：例如：重点看节奏和爽点密度"
+        value={instruction}
+        onChange={e => setInstruction(e.target.value)}
+        style={{ marginBottom: 8 }}
+      />
+      <Form.Item label="应用 Skill" style={{ marginBottom: 8 }}>
+        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+      </Form.Item>
+      <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
+      <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
+        {loading && (
+          <Alert type="info" showIcon message="正在调用 AI 点评（通常需要 1-2 分钟），请稍候" />
+        )}
+        <Button
+          type="primary"
+          ghost
+          icon={<ThunderboltOutlined />}
+          loading={loading}
+          onClick={handleReview}
+        >
+          AI 点评建议
+        </Button>
+      </Space>
+      {review && (
+        <Card size="small" style={{ marginTop: 12, background: token.colorFillQuaternary }}>
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.8 }}>
+            {review}
+          </div>
+        </Card>
+      )}
     </>
   );
 }
