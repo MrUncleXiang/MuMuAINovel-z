@@ -131,11 +131,14 @@ class ChapterGenerateRequest(BaseModel):
     provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    skip_analysis_check: bool = Field(False, description="跳过上一章分析检查（不推荐，可能导致记忆/伏笔不连贯）")
 
 
 class ChapterComparisonSelection(BaseModel):
     provider_config_id: str = Field(..., description="AI 服务配置ID")
     model: str = Field(..., min_length=1, max_length=150, description="模型名称")
+    skill_key: Optional[str] = Field(None, description="该模型单独使用的 Skill；不填则跟随请求级 skill_key")
+    target_word_count: Optional[int] = Field(None, ge=500, le=10000, description="该模型单独的目标字数；不填则跟随请求级 target_word_count")
 
 
 class ChapterComparisonCreateRequest(BaseModel):
@@ -146,6 +149,7 @@ class ChapterComparisonCreateRequest(BaseModel):
     enable_mcp: bool = True
     narrative_perspective: Optional[str] = None
     skill_key: Optional[str] = None
+    skip_analysis_check: bool = False
 
     @classmethod
     def _selection_key(cls, item: ChapterComparisonSelection) -> tuple[str, str]:
@@ -191,6 +195,7 @@ class BatchGenerateRequest(BaseModel):
     provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
     narrative_perspective: Optional[str] = Field(None, description="临时指定叙事人称，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    skip_analysis_check: bool = Field(False, description="跳过上一章分析检查（不推荐）")
 
 
 class BatchGenerateResponse(BaseModel):

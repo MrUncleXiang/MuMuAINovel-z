@@ -73,6 +73,14 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
           message={<Text>实际将使用：{resolved.provider_name} · {resolved.model}</Text>}
         />
       )}
+      {/* flash 轻量模型提示：长内容生成易被截断 */}
+      {value?.model && /flash/i.test(value.model) && (
+        <Alert
+          type="warning"
+          showIcon
+          message={<Text>⚠️ {value.model} 为轻量模型，长内容生成可能被截断（尤其带 Skill 时），建议改用 pro 级模型</Text>}
+        />
+      )}
     </Space>
   );
 }

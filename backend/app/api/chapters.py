@@ -1029,7 +1029,7 @@ async def create_chapter_comparison_batch(
     if not can_generate:
         raise HTTPException(status_code=400, detail=error_msg)
     analysis_ready, analysis_msg = await check_previous_analysis_ready(db, chapter)
-    if not analysis_ready:
+    if not analysis_ready and not getattr(payload, 'skip_analysis_check', False):
         raise HTTPException(status_code=409, detail=analysis_msg)
     try:
         batch, _ = await create_chapter_comparison(db, chapter=chapter, user_id=user_id, request=payload)
@@ -1202,7 +1202,7 @@ async def generate_chapter_content_stream(
             if not can_generate:
                 raise HTTPException(status_code=400, detail=error_msg)
             analysis_ready, analysis_msg = await check_previous_analysis_ready(temp_db, chapter)
-            if not analysis_ready:
+            if not analysis_ready and not getattr(generate_request, 'skip_analysis_check', False):
                 raise HTTPException(status_code=409, detail=analysis_msg)
             
             # 保存前置章节数据供生成器使用
@@ -1695,7 +1695,7 @@ async def generate_chapter_content_background(
     if not can_generate:
         raise HTTPException(status_code=400, detail=error_msg)
     analysis_ready, analysis_msg = await check_previous_analysis_ready(db, chapter)
-    if not analysis_ready:
+    if not analysis_ready and not getattr(generate_request, 'skip_analysis_check', False):
         raise HTTPException(status_code=409, detail=analysis_msg)
 
     # 创建后台任务
@@ -2945,7 +2945,7 @@ async def batch_compare_chapters(
 
     # 起始章节的前一章必须已完成分析（否则上下文滞后，候选质量受影响）
     analysis_ready, analysis_msg = await check_previous_analysis_ready(db, target[0])
-    if not analysis_ready:
+    if not analysis_ready and not getattr(payload, 'skip_analysis_check', False):
         raise HTTPException(status_code=409, detail=f"批量对比需先保证上下文连贯：{analysis_msg}")
 
     # 登记批量对比任务（复用批量任务表，task_type=batch_compare，前端悬浮任务框可查看进度）
@@ -3072,6 +3072,8 @@ async def batch_generate_chapters_in_order(
         failed_chapters=[],
         current_retry_count=0
     )
+    # 动态属性传递跳过检查标志（后台任务同进程执行可读取；不落库）
+    batch_task.skip_analysis_check = batch_request.skip_analysis_check
     db.add(batch_task)
     await db.commit()
     await db.refresh(batch_task)
@@ -3394,7 +3396,7 @@ async def execute_batch_generation_in_order(
                     if not can_generate:
                         raise Exception(f"前置条件不满足: {error_msg}")
                     analysis_ready, analysis_msg = await check_previous_analysis_ready(db_session, chapter)
-                    if not analysis_ready:
+                    if not analysis_ready and not getattr(task, 'skip_analysis_check', False):
                         raise Exception(analysis_msg)
                     
                     # 生成章节内容（复用现有流式生成逻辑的核心部分），传递model参数

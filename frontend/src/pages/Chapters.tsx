@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, theme } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, Checkbox, theme } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
@@ -1333,6 +1333,7 @@ export default function Chapters() {
     styleId?: number;
     targetWordCount?: number;
     model?: string;
+    skipAnalysisCheck?: boolean;
   }) => {
     if (!currentProject?.id) return;
 
@@ -1413,6 +1414,7 @@ export default function Chapters() {
         start_chapter_number: number;
         count: number;
         enable_analysis: boolean;
+        skip_analysis_check?: boolean;
         style_id: number;
         target_word_count: number;
         model?: string;
@@ -1422,6 +1424,7 @@ export default function Chapters() {
         start_chapter_number: values.startChapterNumber,
         count: values.count,
         enable_analysis: values.enableAnalysis,
+        skip_analysis_check: values.skipAnalysisCheck || false,
         style_id: styleId,
         target_word_count: wordCount,
       };
@@ -3453,6 +3456,16 @@ export default function Chapters() {
                   <span style={{ fontSize: 12, color: token.colorSuccess }}>✓ 自动更新角色状态</span>
                 </Radio>
               </Radio.Group>
+            </Form.Item>
+
+            {/* 跳过上一章分析检查（默认关闭；上一章分析失败/卡死时用于解除阻塞） */}
+            <Form.Item name="skipAnalysisCheck" valuePropName="checked" style={{ marginBottom: 12 }}>
+              <Checkbox>
+                跳过上一章分析检查
+                <span style={{ fontSize: 12, color: token.colorTextTertiary, marginLeft: 8 }}>
+                  （上一章分析失败/卡死导致无法生成时勾选；可能导致记忆/伏笔不连贯）
+                </span>
+              </Checkbox>
             </Form.Item>
           </Form>
         ) : (

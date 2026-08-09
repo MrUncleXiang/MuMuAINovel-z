@@ -67,9 +67,28 @@ async def check_previous_analysis_ready(
         .limit(1)
     )
 
+    if not latest_task:
+        return False, (
+            f"上一章（第{prev_chapter.chapter_number}章）还没有分析记录，"
+            "无法保证角色状态/记忆/伏笔连贯。可在章节管理中对上一章点「分析」，"
+            "或在生成时勾选「跳过上一章分析检查」继续"
+        )
+
+    if latest_task.status == "running" or latest_task.status == "pending":
+        return False, (
+            f"上一章（第{prev_chapter.chapter_number}章）的分析正在进行中，"
+            "请等待其完成后再生成下一章；若等待过久，可在章节管理中重新分析该章"
+        )
+
+    if latest_task.status == "failed":
+        return False, (
+            f"上一章（第{prev_chapter.chapter_number}章）的分析失败了，"
+            "请在章节管理中对上一章点「重新分析」；"
+            "或在生成时勾选「跳过上一章分析检查」继续"
+        )
+
     ready = bool(
-        latest_task
-        and latest_task.status == "completed"
+        latest_task.status == "completed"
         and latest_task.materialized_at is not None
         and analysis_task_matches_content(latest_task, prev_chapter)
     )
@@ -91,6 +110,7 @@ async def check_previous_analysis_ready(
         return True, ""
 
     return False, (
-        f"上一章（第{prev_chapter.chapter_number}章）当前正文的内容分析尚未完成，"
-        "请等待分析完成后再生成下一章，以保证角色状态、记忆和伏笔连贯"
+        f"上一章（第{prev_chapter.chapter_number}章）的内容自上次分析后有变更"
+        "（或分析未完成物化），请在章节管理中对上一章重新分析，"
+        "或在生成时勾选「跳过上一章分析检查」继续"
     )
