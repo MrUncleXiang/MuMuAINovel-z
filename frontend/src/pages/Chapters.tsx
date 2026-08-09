@@ -66,8 +66,6 @@ export default function Chapters() {
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState<number | undefined>();
   const [targetWordCount, setTargetWordCount] = useState<number>(getCachedWordCount);
-  const [availableModels, setAvailableModels] = useState<Array<{ value: string, label: string }>>([]);
-  const [batchProviderModels, setBatchProviderModels] = useState<Array<{ value: string, label: string }>>([]); // 所选服务的模型
   const [selectedModel, setSelectedModel] = useState<string | undefined>();
   const [aiServiceSelection, setAIServiceSelection] = useState<AIServiceSelection>({});
   const [generationMode, setGenerationMode] = useState<'single' | 'compare'>('single');
@@ -78,8 +76,8 @@ export default function Chapters() {
   const comparisonPollingRef = useRef<number | null>(null);
   const [candidateDiffVisible, setCandidateDiffVisible] = useState(false);
   const [candidateDiffIds, setCandidateDiffIds] = useState<[string | undefined, string | undefined]>([undefined, undefined]);
-  const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
-  const [batchSelectedProvider, setBatchSelectedProvider] = useState<string | undefined>(); // 批量生成的 AI 服务配置
+  // 批量生成的 AI 服务+模型选择（统一用 AIServiceSelector）
+  const [batchAIState, setBatchAIState] = useState<AIServiceSelection>({});
   const [providers, setProviders] = useState<AIProviderConfig[]>([]);
   const [batchMode, setBatchMode] = useState<'single' | 'compare'>('single'); // 批量生成方式
   const [batchComparisonSelections, setBatchComparisonSelections] = useState<LLMComparisonSelection[]>([]); // 批量多模型选择
@@ -554,35 +552,20 @@ export default function Chapters() {
     }
   };
 
-  const loadAvailableModels = async () => {
+  // 预填默认服务商及其默认模型（OpenCode Go · deepseek-v4-flash），动态获取不硬编码
+  const loadDefaultSelection = async (): Promise<string | null> => {
     try {
-      // 从设置API获取用户配置的模型列表
-      const settingsResponse = await fetch('/api/settings');
-      if (settingsResponse.ok) {
-        const settings = await settingsResponse.json();
-        const { api_key, api_base_url, api_provider } = settings;
-
-        if (api_base_url) {
-          try {
-            const modelsResponse = await fetch(
-              `/api/settings/models?api_key=${encodeURIComponent(api_key || '')}&api_base_url=${encodeURIComponent(api_base_url)}&provider=${api_provider}`
-            );
-            if (modelsResponse.ok) {
-              const data = await modelsResponse.json();
-              if (data.models && data.models.length > 0) {
-                setAvailableModels(data.models);
-                // 设置默认模型为当前配置的模型
-                setSelectedModel(settings.llm_model);
-                return settings.llm_model; // 返回模型名称
-              }
-            }
-          } catch {
-            console.log('获取模型列表失败，将使用默认模型');
-          }
-        }
+      const providerList = await aiProviderApi.list();
+      const def = providerList.find(p => p.enabled && p.is_default) ?? providerList.find(p => p.enabled);
+      if (def?.default_model) {
+        const selection = { provider_config_id: def.id, model: def.default_model };
+        setAIServiceSelection(selection);
+        setSelectedModel(def.default_model);
+        setBatchAIState(selection);
+        return def.default_model;
       }
-    } catch (error) {
-      console.error('加载可用模型失败:', error);
+    } catch {
+      console.log('获取默认AI服务失败，将使用默认路由');
     }
     return null;
   };
@@ -901,7 +884,7 @@ export default function Chapters() {
       stopComparisonPolling();
       setIsEditorOpen(true);
       // 打开编辑窗口时加载模型列表和Skill列表
-      loadAvailableModels();
+      loadDefaultSelection();
       loadAvailableSkills();
       llmComparisonApi.list({ project_id: chapter.project_id, target_type: 'chapter', target_id: chapter.id, limit: 1 })
         .then(result => setComparisonBatch(result.items[0] || null))
@@ -1402,14 +1385,15 @@ export default function Chapters() {
 
     // 调试日志
     console.log('[批量生成] 表单values:', values);
-    console.log('[批量生成] batchSelectedModel状态:', batchSelectedModel);
+    console.log('[批量生成] batchAIState状态:', batchAIState);
 
     // 使用批量生成对话框中选择的风格和字数，如果没有选择则使用默认值
     const styleId = values.styleId || selectedStyleId;
     const wordCount = values.targetWordCount || targetWordCount;
 
-    // 使用批量生成专用的模型状态
-    const model = batchSelectedModel;
+    // 使用批量生成专用的模型状态（统一由 AIServiceSelector 管理）
+    const model = batchAIState.model;
+    const providerConfigId = batchAIState.provider_config_id;
 
     console.log('[批量生成] 最终使用的model:', model);
 
@@ -1448,9 +1432,9 @@ export default function Chapters() {
       }
 
       // 如果有 AI 服务配置，添加到请求体中
-      if (batchSelectedProvider) {
-        requestBody.provider_config_id = batchSelectedProvider;
-        console.log('[批量生成] 请求体包含provider_config_id:', batchSelectedProvider);
+      if (providerConfigId) {
+        requestBody.provider_config_id = providerConfigId;
+        console.log('[批量生成] 请求体包含provider_config_id:', providerConfigId);
       }
 
       // 如果有 Skill 参数，添加到请求体中
@@ -1647,14 +1631,13 @@ export default function Chapters() {
     }
 
     // 打开对话框时加载模型列表和Skill列表，等待完成
-    const defaultModel = await loadAvailableModels();
+    const defaultModel = await loadDefaultSelection();
     loadAvailableSkills();
 
     console.log('[打开批量生成] defaultModel:', defaultModel);
     console.log('[打开批量生成] selectedStyleId:', selectedStyleId);
 
-    // 设置批量生成的模型选择状态
-    setBatchSelectedModel(defaultModel || undefined);
+    // 批量模型选择已由 loadDefaultSelection 预填（batchAIState），无需额外设置
 
     // 重置表单并设置初始值（使用缓存的字数）
     batchForm.setFieldsValue({
@@ -3136,30 +3119,6 @@ export default function Chapters() {
                 />
               </Form.Item>
             )}
-
-            {generationMode !== 'compare' && (
-              <Form.Item
-                label="AI模型"
-                tooltip="选择用于生成章节内容的AI模型，不选择则使用默认模型"
-                style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
-              >
-                <Select
-                  placeholder={selectedModel ? `默认: ${availableModels.find(m => m.value === selectedModel)?.label || selectedModel}` : "使用默认模型"}
-                  value={selectedModel}
-                  onChange={setSelectedModel}
-                  allowClear
-                  disabled={isGenerating}
-                  showSearch
-                  optionFilterProp="label"
-                >
-                  {availableModels.map(model => (
-                    <Select.Option key={model.value} value={model.value} label={model.label}>
-                      {model.label}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            )}
           </div>
 
           <Form.Item label="章节内容" name="content">
@@ -3443,52 +3402,16 @@ export default function Chapters() {
               </Form.Item>
             )}
 
-            {/* 第三行：AI 服务 + AI模型 + Skill */}
+            {/* 第三行：AI 服务 + 模型 + Skill */}
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 0 : 16 }}>
-              <Form.Item
-                label="AI 服务"
-                tooltip="选择自定义 AI 服务配置（OpenCode Go / vc-grok 等），不选则使用默认路由"
-                style={{ flex: 1, marginBottom: 12 }}
-              >
-                <Select
-                  placeholder="使用默认路由"
-                  value={batchSelectedProvider}
-                  onChange={(value) => {
-                    setBatchSelectedProvider(value);
-                    const provider = providers.find(p => p.id === value);
-                    setBatchProviderModels(provider ? provider.models.map(m => ({ value: m, label: m })) : []);
-                    if (!provider) setBatchSelectedModel(undefined);
-                  }}
-                  allowClear
-                >
-                  {providers.map(p => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>
-                      {p.name}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-              <Form.Item
-                label="AI模型"
-                tooltip="不选则使用所选服务/默认模型"
-                style={{ flex: 1, marginBottom: 12 }}
-              >
-                <Select
-                  placeholder={batchSelectedModel ? `默认: ${(batchProviderModels.length ? batchProviderModels : availableModels).find(m => m.value === batchSelectedModel)?.label || batchSelectedModel}` : (batchSelectedProvider ? "选择该服务的模型" : "使用默认模型")}
-                  value={batchSelectedModel}
-                  onChange={setBatchSelectedModel}
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  options={batchSelectedProvider ? batchProviderModels : availableModels}
-                >
-                  {(batchSelectedProvider ? batchProviderModels : availableModels).map(model => (
-                    <Select.Option key={model.value} value={model.value} label={model.label}>
-                      {model.label}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
+              <div style={{ flex: 1 }}>
+                <AIServiceSelector
+                  usageType="chapter_write"
+                  value={batchAIState}
+                  onChange={setBatchAIState}
+                  disabled={batchGenerating}
+                />
+              </div>
 
               <Form.Item
                 label="应用 Skill"
