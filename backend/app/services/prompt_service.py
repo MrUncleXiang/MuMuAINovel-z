@@ -739,6 +739,71 @@ class PromptService:
 </user_input>
 """
     
+    # 展开前 AI 建议提示词（展开弹窗使用，输出 JSON 供采纳）
+    OUTLINE_EXPAND_ADVICE = """<system>
+你是资深网文编辑和分卷策划，擅长判断一卷大纲应展开为几章、用什么节奏策略。
+</system>
+
+<task>
+【任务】
+分析下面这卷大纲，给出展开建议。
+
+【输出要求】
+- 推荐章节数：根据大纲信息量、篇幅和剧情密度判断（一般 3-6 章）
+- 推荐策略：balanced（均衡分配）/ climax（高潮重点）/ detail（细节丰富）三选一
+- 推荐理由：2-4 句具体理由，基于大纲事实
+- 每章预览：按推荐章节数给出每章的标题与一句话剧情概要
+- 只输出 JSON，不要输出任何其他文字：
+
+{{
+  "recommended_count": 3,
+  "strategy": "balanced",
+  "reason": "推荐理由",
+  "chapter_previews": [
+    {{"title": "章节标题", "summary": "一句话剧情"}}
+  ]
+}}
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<outline_context priority="P0">
+【本卷大纲】
+第{order_index}条《{outline_title}》
+内容：{outline_content}
+结构字段：{outline_structure}
+</outline_context>
+
+<neighbors priority="P2">
+【相邻大纲（前一条/后一条）】
+{neighbors}
+</neighbors>
+
+<user_input priority="P2">
+【用户关注点】
+{instruction}
+</user_input>
+"""
+    
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
 你是《{project_title}》的作者，一位专注于{genre}类型的网络小说家。
@@ -3140,6 +3205,14 @@ class PromptService:
                              "location", "atmosphere", "rules", "characters_info", "order_index", 
                              "outline_title", "outline_content", "chapter_count", "chapters_detail", 
                              "neighbors", "instruction"]
+            },
+            "OUTLINE_EXPAND_ADVICE": {
+                "name": "展开前AI建议",
+                "category": "大纲生成",
+                "description": "展开前AI建议（推荐章节数/策略/每章预览，可采纳）",
+                "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
+                             "location", "atmosphere", "rules", "characters_info", "order_index", 
+                             "outline_title", "outline_content", "outline_structure", "neighbors", "instruction"]
             },
             "CHAPTER_GENERATION_ONE_TO_MANY": {
                 "name": "章节创作-1-N模式（第1章）",

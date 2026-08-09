@@ -27,6 +27,9 @@ from app.schemas.outline import (
     OutlineAIDraftResponse,
     OutlineAIReviewRequest,
     OutlineAIReviewResponse,
+    OutlineExpandAdviceRequest,
+    OutlineExpandAdviceResponse,
+    ExpandChapterPreview,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -2166,6 +2169,115 @@ async def outline_ai_review(
     await db.commit()
 
     return OutlineAIReviewResponse(review=raw)
+
+
+@router.post("/{outline_id}/expand-advice", response_model=OutlineExpandAdviceResponse, summary="展开前AI建议（不入库）")
+async def outline_expand_advice(
+    outline_id: str,
+    payload: OutlineExpandAdviceRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """展开前 AI 建议：推荐章节数/策略/每章预览（不写入数据库，展示供采纳）"""
+    user_id = getattr(request.state, 'user_id', None)
+    result = await db.execute(select(Outline).where(Outline.id == outline_id))
+    outline = result.scalar_one_or_none()
+    if not outline:
+        raise HTTPException(status_code=404, detail="大纲不存在")
+    await verify_project_access(outline.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == outline.project_id))
+    project = project_result.scalar_one_or_none()
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == outline.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(select(Character).where(Character.project_id == outline.project_id))).all())
+
+    # 大纲结构字段摘要（缩短，控制上下文）
+    struct_text = ""
+    try:
+        sdata = json.loads(outline.structure) if outline.structure else {}
+        parts = []
+        if sdata.get("scenes"):
+            parts.append("场景：" + "、".join(str(x) for x in sdata["scenes"][:5]))
+        if sdata.get("key_points"):
+            parts.append("要点：" + "；".join(str(x) for x in sdata["key_points"][:5]))
+        if sdata.get("emotion"):
+            parts.append("情感：" + str(sdata["emotion"]))
+        if sdata.get("goal"):
+            parts.append("目标：" + str(sdata["goal"]))
+        struct_text = "\n".join(parts)
+    except Exception:
+        struct_text = ""
+
+    template = await PromptService.get_template("OUTLINE_EXPAND_ADVICE", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title if project else "未命名",
+        theme=(project.theme if project else None) or "未设定",
+        genre=(project.genre if project else None) or "通用",
+        narrative_perspective=(project.narrative_perspective if project else None) or "第三人称",
+        time_period=(project.world_time_period if project else None) or "未设定",
+        location=(project.world_location if project else None) or "未设定",
+        atmosphere=(project.world_atmosphere if project else None) or "未设定",
+        rules=(project.world_rules if project else None) or "未设定",
+        characters_info=_build_characters_info(characters) or "暂无角色信息",
+        order_index=outline.order_index,
+        outline_title=outline.title,
+        outline_content=outline.content or "",
+        outline_structure=struct_text or "（无）",
+        neighbors=_build_neighbors_text(outlines, outline.order_index),
+        instruction=payload.instruction or "按常规节奏展开",
+    )
+    system_prompt = build_skill_system_prompt(payload.skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（展开建议）")
+
+    from app.services.ai_provider_service import create_routed_ai_service
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="outline",
+        provider_config_id=payload.provider_config_id, model=payload.model,
+        project_id=outline.project_id,
+    )
+    result_text = await service.generate_text(prompt=prompt, system_prompt=system_prompt, auto_mcp=False)
+    raw = str(result_text.get("content") or "").strip()
+
+    # 解析 JSON 建议
+    try:
+        data = loads_json(raw)
+        if not isinstance(data, dict):
+            raise ValueError("建议不是 JSON 对象")
+        recommended_count = int(data.get("recommended_count") or 3)
+        recommended_count = max(1, min(10, recommended_count))
+        strategy = str(data.get("strategy") or "balanced")
+        if strategy not in ("balanced", "climax", "detail"):
+            strategy = "balanced"
+        reason = str(data.get("reason") or "").strip()
+        previews_raw = data.get("chapter_previews") or []
+        previews = []
+        for p in previews_raw[:recommended_count]:
+            if isinstance(p, dict):
+                previews.append({
+                    "title": str(p.get("title") or "").strip(),
+                    "summary": str(p.get("summary") or "").strip(),
+                })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI 建议解析失败：{e}。原始内容：{raw[:300]}")
+
+    db.add(GenerationHistory(
+        project_id=outline.project_id,
+        prompt=prompt,
+        generated_content=raw,
+        model=payload.model or "default",
+    ))
+    await db.commit()
+
+    return OutlineExpandAdviceResponse(
+        recommended_count=recommended_count,
+        strategy=strategy,
+        reason=reason,
+        chapter_previews=[ExpandChapterPreview(**p) for p in previews],
+    )
 
 
 @router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")

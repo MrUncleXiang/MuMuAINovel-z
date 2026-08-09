@@ -987,6 +987,7 @@ export default function Outline() {
                 </Radio.Group>
               </Form.Item>
             </Form>
+            <ExpandAdviceSection outlineId={outlineId} form={expansionForm} />
           </div>
         ),
         okText: '提交后台任务',
@@ -2755,6 +2756,112 @@ function ExpandReviewSection({ outlineId }: { outlineId: string }) {
           <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.8 }}>
             {review}
           </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+// AI 展开建议（展开弹窗内子组件，自持状态）
+function ExpandAdviceSection({ outlineId, form }: { outlineId: string; form: FormInstance }) {
+  const { token } = theme.useToken();
+  const [instruction, setInstruction] = useState('');
+  const [skillKey, setSkillKey] = useState<string | undefined>();
+  const [selection, setSelection] = useState<AIServiceSelection | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [advice, setAdvice] = useState<{
+    recommended_count: number;
+    strategy: string;
+    reason: string;
+    chapter_previews: Array<{ title: string; summary: string }>;
+  } | null>(null);
+
+  const handleAdvice = async () => {
+    setLoading(true);
+    try {
+      const res = await outlineApi.expandAdvice(outlineId, {
+        instruction: instruction.trim() || undefined,
+        skill_key: skillKey,
+        provider_config_id: selection?.provider_config_id,
+        model: selection?.model,
+      });
+      setAdvice(res);
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || 'AI 展开建议失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 一键采纳：把建议填入展开表单
+  const handleAdopt = () => {
+    if (!advice) return;
+    form.setFieldsValue({
+      target_chapter_count: advice.recommended_count,
+      expansion_strategy: advice.strategy,
+    });
+    message.success(`已采纳：展开 ${advice.recommended_count} 章，策略「${advice.strategy === 'climax' ? '高潮重点' : advice.strategy === 'detail' ? '细节丰富' : '均衡分配'}」`);
+  };
+
+  const strategyName = (s: string) => (s === 'climax' ? '高潮重点' : s === 'detail' ? '细节丰富' : '均衡分配');
+
+  return (
+    <>
+      <Divider style={{ margin: '16px 0 8px' }}>🤖 AI 展开建议（基于本卷大纲分析）</Divider>
+      <TextArea
+        rows={1}
+        placeholder="关注点（可选）：例如：本卷有大高潮，希望重点铺垫"
+        value={instruction}
+        onChange={e => setInstruction(e.target.value)}
+        style={{ marginBottom: 8 }}
+      />
+      <Space wrap size={8} style={{ marginBottom: 8, width: '100%' }}>
+        <Form.Item label="应用 Skill" style={{ marginBottom: 0 }}>
+          <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+        </Form.Item>
+      </Space>
+      <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
+      <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
+        {loading && (
+          <Alert type="info" showIcon message="正在分析本卷大纲并生成展开建议（约 1 分钟），请稍候" />
+        )}
+        <Button type="primary" ghost icon={<ThunderboltOutlined />} loading={loading} onClick={handleAdvice}>
+          AI 展开建议
+        </Button>
+      </Space>
+      {advice && (
+        <Card size="small" style={{ marginTop: 12, background: token.colorFillQuaternary }}>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <div>
+              <Tag color="blue">推荐 {advice.recommended_count} 章</Tag>
+              <Tag color="green">策略：{strategyName(advice.strategy)}</Tag>
+              <Button
+                type="link"
+                size="small"
+                icon={<CheckCircleOutlined />}
+                style={{ padding: 0, marginLeft: 8 }}
+                onClick={handleAdopt}
+              >
+                采纳建议
+              </Button>
+            </div>
+            {advice.reason && (
+              <div style={{ fontSize: 13, color: token.colorTextSecondary, lineHeight: 1.7 }}>
+                💡 {advice.reason}
+              </div>
+            )}
+            {advice.chapter_previews.length > 0 && (
+              <div>
+                {advice.chapter_previews.map((p, idx) => (
+                  <div key={idx} style={{ marginBottom: 6, fontSize: 13 }}>
+                    <strong>第{idx + 1}章《{p.title}》</strong>
+                    <div style={{ color: token.colorTextSecondary, lineHeight: 1.6 }}>{p.summary}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Space>
         </Card>
       )}
     </>

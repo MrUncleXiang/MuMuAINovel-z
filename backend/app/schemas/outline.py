@@ -145,6 +145,28 @@ class OutlineAIReviewResponse(BaseModel):
     review: str = Field(..., description="AI 点评建议文本")
 
 
+class OutlineExpandAdviceRequest(BaseModel):
+    """展开前 AI 建议请求模型（结果不入库，仅展示与采纳）"""
+    instruction: Optional[str] = Field(None, description="关注点，如：本卷有大高潮，希望重点铺垫")
+    skill_key: Optional[str] = Field(None, description="Skill 标识")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class ExpandChapterPreview(BaseModel):
+    """建议展开的单章预览"""
+    title: str = Field(..., description="建议章节标题")
+    summary: str = Field(..., description="一句话剧情概要")
+
+
+class OutlineExpandAdviceResponse(BaseModel):
+    """展开前 AI 建议响应模型"""
+    recommended_count: int = Field(..., description="推荐展开章节数")
+    strategy: str = Field(..., description="推荐策略: balanced/climax/detail")
+    reason: str = Field(..., description="推荐理由")
+    chapter_previews: list[ExpandChapterPreview] = Field(default_factory=list, description="每章主题预览")
+
+
 class ChapterPlanItem(BaseModel):
     """单个章节规划项"""
     sub_index: int = Field(..., description="子章节序号", ge=1)
