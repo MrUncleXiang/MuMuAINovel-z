@@ -871,6 +871,17 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           >
             重新分析
           </Button>
+        ),
+        task && task.status === 'completed' && analysis?.analysis?.suggestions && analysis.analysis.suggestions.length > 0 && (
+          <Button
+            key="regenerate"
+            type="primary"
+            icon={<EditOutlined />}
+            onClick={() => setRegenerationModalVisible(true)}
+            size={isMobile ? 'small' : 'middle'}
+          >
+            根据建议重新生成
+          </Button>
         )
       ].filter(Boolean)}
     >
