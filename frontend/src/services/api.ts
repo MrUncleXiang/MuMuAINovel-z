@@ -844,6 +844,9 @@ export const chapterApi = {
 
   deleteChapter: (id: string) => api.delete(`/chapters/${id}`),
 
+  deleteAllChapters: (projectId: string) =>
+    api.delete<unknown, { message: string; deleted_count: number }>(`/chapters/project/${projectId}`),
+
   checkCanGenerate: (chapterId: string) =>
     api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
 

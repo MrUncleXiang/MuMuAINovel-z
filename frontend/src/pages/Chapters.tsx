@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, theme } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -87,6 +87,11 @@ export default function Chapters() {
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
   const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string }>>([]);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
+  // 正文写作场景只提供“正文写作”类 Skill，避免把审稿/人设/大纲等混进来
+  const writingSkills = useMemo(
+    () => availableSkills.filter(skill => skill.category === 'Skill·正文写作'),
+    [availableSkills],
+  );
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
   // 分析任务状态管理
@@ -1128,6 +1133,10 @@ export default function Chapters() {
     }
   };
 
+  const updateComparisonSelection = (index: number, patch: Partial<Pick<LLMComparisonSelection, 'skill_key' | 'target_word_count'>>) => {
+    setComparisonSelections(prev => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
   const pollComparisonBatch = (batchId: string) => {
     stopComparisonPolling();
     comparisonPollingRef.current = window.setInterval(async () => {
@@ -1159,7 +1168,7 @@ export default function Chapters() {
         style_id: selectedStyleId,
         target_word_count: targetWordCount,
         narrative_perspective: temporaryNarrativePerspective,
-        skill_key: selectedSkillKey,
+        skill_key: generationMode === 'compare' ? undefined : selectedSkillKey,
         enable_mcp: true,
       });
       setComparisonBatch(batch);
@@ -2134,6 +2143,48 @@ export default function Chapters() {
     }
   };
 
+  // 删除全部章节（保留大纲）
+  const handleDeleteAllChapters = () => {
+    const total = chapters.length;
+    if (total === 0) {
+      message.info('当前没有可删除的章节');
+      return;
+    }
+    Modal.confirm({
+      title: '确认删除全部章节？',
+      icon: <ExclamationCircleOutlined />,
+      centered: true,
+      content: (
+        <div>
+          <p>此操作将删除当前项目的全部 <strong>{total}</strong> 个章节。</p>
+          <p style={{ color: token.colorPrimary, marginTop: 8 }}>📝 大纲会保留，之后可以重新展开。</p>
+          <p style={{ color: token.colorError, marginTop: 8 }}>
+            ⚠️ 章节正文、分析结果、相关伏笔与向量记忆将永久删除且无法恢复！
+          </p>
+        </div>
+      ),
+      okText: '确认全部删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await chapterApi.deleteAllChapters(currentProject.id);
+          // 刷新章节列表
+          await refreshChapters();
+          // 刷新项目信息以更新总字数统计
+          if (currentProject) {
+            const updatedProject = await projectApi.getProject(currentProject.id);
+            setCurrentProject(updatedProject);
+          }
+          message.success(res.message || '章节全部删除成功');
+        } catch (error: unknown) {
+          const err = error as Error;
+          message.error('删除全部章节失败：' + (err.message || '未知错误'));
+        }
+      },
+    });
+  };
+
   // 打开规划编辑器
   const handleOpenPlanEditor = (chapter: Chapter) => {
     // 直接打开编辑器,如果没有规划数据则创建新的
@@ -2288,6 +2339,16 @@ export default function Chapters() {
             style={batchGenerating ? {} : { background: token.colorInfo, borderColor: token.colorInfo }}
           >
             {batchGenerating ? '生成中...' : '批量生成'}
+          </Button>
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            onClick={handleDeleteAllChapters}
+            disabled={chapters.length === 0}
+            block={isMobile}
+            size={isMobile ? 'middle' : 'middle'}
+          >
+            全部删除
           </Button>
           <Button
             type="default"
@@ -2953,93 +3014,152 @@ export default function Chapters() {
               disabled={isGenerating}
             />
           ) : (
-            <LLMMultiSelector
-              value={comparisonSelections}
-              onChange={setComparisonSelections}
-              disabled={isGenerating || comparisonBusy}
-            />
+            <>
+              <LLMMultiSelector
+                value={comparisonSelections}
+                onChange={(next) => {
+                  // 保留已选模型单独配置的 Skill / 字数；新加的模型留空（跟随通用设置）
+                  setComparisonSelections(next.map(item => {
+                    const prev = comparisonSelections.find(p => p.provider_config_id === item.provider_config_id && p.model === item.model);
+                    return prev || item;
+                  }));
+                }}
+                disabled={isGenerating || comparisonBusy}
+              />
+              {comparisonSelections.length > 0 && (
+                <Card size="small" style={{ marginBottom: 12, background: token.colorFillQuaternary }}>
+                  <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 8 }}>
+                    每个模型单独设置（可选）：留空 = 不使用 Skill、字数用默认值
+                  </div>
+                  <Space direction="vertical" style={{ width: '100%' }} size="small">
+                    {comparisonSelections.map((selection, index) => {
+                      const provider = providers.find(p => p.id === selection.provider_config_id);
+                      return (
+                        <div key={`${selection.provider_config_id}\u0000${selection.model}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <Tag style={{ marginRight: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>{provider?.name || selection.provider_config_id} · {selection.model}</Tag>
+                          <Select
+                            style={{ width: 260, flexShrink: 0 }}
+                            placeholder="不使用 Skill"
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            value={selection.skill_key}
+                            disabled={isGenerating || comparisonBusy}
+                            onChange={(value) => updateComparisonSelection(index, { skill_key: value })}
+                          >
+                            {writingSkills.map(skill => (
+                              <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
+                                {skill.template_name}
+                              </Select.Option>
+                            ))}
+                          </Select>
+                          <InputNumber
+                            style={{ width: 170, flexShrink: 0 }}
+                            placeholder="默认字数"
+                            min={500}
+                            max={10000}
+                            step={100}
+                            value={selection.target_word_count}
+                            disabled={isGenerating || comparisonBusy}
+                            onChange={(value) => updateComparisonSelection(index, { target_word_count: value ?? undefined })}
+                            formatter={(value) => `${value} 字`}
+                            parser={(value) => parseInt(value?.replace(' 字', '') || '0', 10) as unknown as 500}
+                          />
+                        </div>
+                      );
+                    })}
+                  </Space>
+                </Card>
+              )}
+            </>
           )}
           <div style={{
             display: isMobile ? 'block' : 'flex',
             gap: isMobile ? 0 : 16,
             marginBottom: isMobile ? 16 : 12
           }}>
-            <Form.Item
-              label="应用 Skill"
-              tooltip="选择一个 Skill 工作流指导 AI 创作，不选则使用标准创作流程"
-              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
-            >
-              <Select
-                placeholder="不使用 Skill（标准创作）"
-                value={selectedSkillKey}
-                onChange={setSelectedSkillKey}
-                allowClear
-                disabled={isGenerating}
-                showSearch
-                optionFilterProp="label"
+            {generationMode !== 'compare' && (
+              <Form.Item
+                label="应用 Skill"
+                tooltip="选择一个 Skill 工作流指导 AI 创作，不选则使用标准创作流程"
+                style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
               >
-                {availableSkills.map(skill => (
-                  <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span>{skill.template_name}</span>
-                      <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                <Select
+                  placeholder="不使用 Skill（标准创作）"
+                  value={selectedSkillKey}
+                  onChange={setSelectedSkillKey}
+                  allowClear
+                  disabled={isGenerating}
+                  showSearch
+                  optionFilterProp="label"
+                >
+                  {writingSkills.map(skill => (
+                    <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>{skill.template_name}</span>
+                        <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+                {selectedSkillKey && (() => {
+                  const skill = availableSkills.find(s => s.template_key === selectedSkillKey);
+                  return skill ? (
+                    <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
+                      ✓ {skill.description}
                     </div>
-                  </Select.Option>
-                ))}
-              </Select>
-              {selectedSkillKey && (() => {
-                const skill = availableSkills.find(s => s.template_key === selectedSkillKey);
-                return skill ? (
-                  <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
-                    ✓ {skill.description}
-                  </div>
-                ) : null;
-              })()}
-            </Form.Item>
+                  ) : null;
+                })()}
+              </Form.Item>
+            )}
 
-            <Form.Item
-              label="目标字数"
-              tooltip="AI生成章节时的目标字数，实际可能略有偏差（修改后会自动记住）"
-              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
-            >
-              <InputNumber
-                min={500}
-                max={10000}
-                step={100}
-                value={targetWordCount}
-                onChange={(value) => {
-                  const newValue = value || DEFAULT_WORD_COUNT;
-                  setTargetWordCount(newValue);
-                  setCachedWordCount(newValue);
-                }}
-                disabled={isGenerating}
-                style={{ width: '100%' }}
-                formatter={(value) => `${value} 字`}
-                parser={(value) => parseInt(value?.replace(' 字', '') || '0', 10) as unknown as 500}
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="AI模型"
-              tooltip="选择用于生成章节内容的AI模型，不选择则使用默认模型"
-              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
-            >
-              <Select
-                placeholder={selectedModel ? `默认: ${availableModels.find(m => m.value === selectedModel)?.label || selectedModel}` : "使用默认模型"}
-                value={selectedModel}
-                onChange={setSelectedModel}
-                allowClear
-                disabled={isGenerating}
-                showSearch
-                optionFilterProp="label"
+            {generationMode !== 'compare' && (
+              <Form.Item
+                label="目标字数"
+                tooltip="AI生成章节时的目标字数，实际可能略有偏差（修改后会自动记住）"
+                style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
               >
-                {availableModels.map(model => (
-                  <Select.Option key={model.value} value={model.value} label={model.label}>
-                    {model.label}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
+                <InputNumber
+                  min={500}
+                  max={10000}
+                  step={100}
+                  value={targetWordCount}
+                  onChange={(value) => {
+                    const newValue = value || DEFAULT_WORD_COUNT;
+                    setTargetWordCount(newValue);
+                    setCachedWordCount(newValue);
+                  }}
+                  disabled={isGenerating}
+                  style={{ width: '100%' }}
+                  formatter={(value) => `${value} 字`}
+                  parser={(value) => parseInt(value?.replace(' 字', '') || '0', 10) as unknown as 500}
+                />
+              </Form.Item>
+            )}
+
+            {generationMode !== 'compare' && (
+              <Form.Item
+                label="AI模型"
+                tooltip="选择用于生成章节内容的AI模型，不选择则使用默认模型"
+                style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
+              >
+                <Select
+                  placeholder={selectedModel ? `默认: ${availableModels.find(m => m.value === selectedModel)?.label || selectedModel}` : "使用默认模型"}
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  allowClear
+                  disabled={isGenerating}
+                  showSearch
+                  optionFilterProp="label"
+                >
+                  {availableModels.map(model => (
+                    <Select.Option key={model.value} value={model.value} label={model.label}>
+                      {model.label}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            )}
           </div>
 
           <Form.Item label="章节内容" name="content">
@@ -3383,7 +3503,7 @@ export default function Chapters() {
                   showSearch
                   optionFilterProp="label"
                 >
-                  {availableSkills.map(skill => (
+                  {writingSkills.map(skill => (
                     <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span>{skill.template_name}</span>
@@ -3489,6 +3609,16 @@ export default function Chapters() {
                     onRetry={handleRetryCandidate}
                     onAdopt={handleAdoptCandidate}
                   />
+                  {(() => {
+                    const variants = (comparisonBatch.input_snapshot?.selection_variants || {}) as Record<string, { skill_name?: string; target_word_count?: number }>;
+                    const key = candidate.provider_config_id ? `${candidate.provider_config_id}\u0000${candidate.model}` : '';
+                    const variant = variants[key];
+                    return variant ? (
+                      <div style={{ fontSize: 12, color: token.colorTextSecondary, marginTop: 4 }}>
+                        Skill：{variant.skill_name || '不使用 Skill'} · 目标字数：{variant.target_word_count} 字
+                      </div>
+                    ) : null;
+                  })()}
                   {candidate.status === 'success' && (
                     <Space style={{ marginTop: 8 }}>
                       <Button size="small" onClick={() => copyCandidate(candidate)}>复制正文</Button>

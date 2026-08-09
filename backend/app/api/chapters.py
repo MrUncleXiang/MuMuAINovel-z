@@ -525,6 +525,54 @@ async def update_chapter(
     return chapter_dict
 
 
+@router.delete("/project/{project_id}", summary="删除项目全部章节")
+async def delete_all_chapters(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """删除项目全部章节（保留大纲），逐章复用清理逻辑：字数/向量记忆/伏笔"""
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(project_id, user_id, db)
+
+    chapters = list((await db.scalars(
+        select(Chapter).where(Chapter.project_id == project_id)
+    )).all())
+    if not chapters:
+        return {"message": "没有可删除的章节", "deleted_count": 0}
+
+    # 更新项目字数（汇总扣减）
+    total_words = sum(ch.word_count or 0 for ch in chapters)
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project and total_words > 0:
+        project.current_words = max(0, (project.current_words or 0) - total_words)
+
+    deleted_count = 0
+    for chapter in chapters:
+        # 🗑️ 清理向量记忆（失败不阻断）
+        try:
+            await memory_service.delete_chapter_memories(
+                user_id=user_id, project_id=project_id, chapter_id=chapter.id
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ 清理章节 {chapter.id[:8]} 向量记忆失败: {e}")
+        # 🔮 清理分析来源伏笔（失败不阻断）
+        try:
+            await foreshadow_service.delete_chapter_foreshadows(
+                db=db, project_id=project_id, chapter_id=chapter.id,
+                only_analysis_source=True
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ 清理章节 {chapter.id[:8]} 伏笔失败: {e}")
+        await db.delete(chapter)
+        deleted_count += 1
+
+    await db.commit()
+    logger.info(f"🗑️ 已删除项目 {project_id} 的全部 {deleted_count} 个章节（保留大纲）")
+    return {"message": f"已删除全部 {deleted_count} 个章节", "deleted_count": deleted_count}
+
+
 @router.delete("/{chapter_id}", summary="删除章节")
 async def delete_chapter(
     chapter_id: str,
@@ -1684,6 +1732,9 @@ async def generate_chapter_content_background(
         db=db
     )
 
+    # 提取闭包需要的值：后台任务运行时请求会话已关闭，不能再访问 ORM 对象（否则可能报 DetachedInstanceError）
+    project_id = chapter.project_id
+
     # 后台执行的函数
     async def _run_chapter_generation(task_id: str, bg_user_id: str):
         from app.database import get_engine
@@ -1705,7 +1756,7 @@ async def generate_chapter_content_background(
                     usage_type="chapter_write",
                     provider_config_id=generate_request.provider_config_id,
                     model=generate_request.model,
-                    project_id=chapter.project_id,
+                    project_id=project_id,
                     chapter_id=chapter_id,
                     task_trace_id=task_id,
                     enable_mcp=generate_request.enable_mcp,
