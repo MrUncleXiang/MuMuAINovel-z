@@ -242,8 +242,9 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         throw new Error(errorData.detail || '触发分析失败');
       }
 
-      // 触发成功后立即关闭Modal，让父组件的状态管理接管
-      onClose();
+      // ✅ 触发成功后保持弹窗打开：重新加载任务状态 → 组件轮询展示前台进度
+      // （不再 onClose，分析中显示进度条，完成后结果直接展示在弹窗内）
+      await fetchAnalysisStatus(chapterId);
     } catch (err) {
       setError((err as Error).message);
     } finally {
