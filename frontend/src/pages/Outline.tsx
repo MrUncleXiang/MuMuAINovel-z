@@ -4,7 +4,7 @@ import type { FormInstance } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
-import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
+import { getProjectTasks, getTaskStatus, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
@@ -145,6 +145,37 @@ export default function Outline() {
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) =>
     `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+  // 自动弹出展开结果预览的防重复标记（记录已自动弹过的 task_id）
+  const autoShownTaskRef = useRef<string | null>(null);
+
+  // 链路闭环：轮询展开任务，完成后自动弹结果预览（内嵌 AI 点评入口）
+  const pollExpandTask = async (taskId: string, outlineId: string) => {
+    const startTime = Date.now();
+    const timer = window.setInterval(async () => {
+      try {
+        const task = await getTaskStatus(taskId);
+        if (task.status === 'completed') {
+          window.clearInterval(timer);
+          if (autoShownTaskRef.current === taskId) return; // 防重复弹
+          autoShownTaskRef.current = taskId;
+          // 完成后拉取展开结果并弹预览
+          const res = await outlineApi.getOutlineChapters(outlineId);
+          if (res && res.has_chapters) {
+            showExistingExpansionPreview(res.outline_title || '展开完成', res, '🎉 展开完成，点击「AI 点评建议」获取质量分析');
+          } else {
+            message.success('大纲展开任务已完成');
+          }
+        } else if (task.status === 'failed' || task.status === 'cancelled') {
+          window.clearInterval(timer);
+          message.error(task.status_message || '大纲展开任务失败，请到任务面板查看');
+        } else if (Date.now() - startTime > 10 * 60 * 1000) {
+          window.clearInterval(timer); // 10 分钟超时保护，避免无限轮询
+        }
+      } catch {
+        window.clearInterval(timer); // 查询失败停止轮询，避免无限循环
+      }
+    }, 5000);
+  };
 
   // ✅ 新增：记录大纲卡片内容的展开/折叠状态（默认折叠）
   const [outlineContentExpandStatus, setOutlineContentExpandStatus] = useState<Record<string, boolean>>({});
@@ -1018,9 +1049,14 @@ export default function Outline() {
               throw new Error(err.detail || '创建大纲展开任务失败');
             }
 
-            message.success('大纲展开任务已提交，可在右下角任务面板查看进度');
+            const taskData = await response.json().catch(() => ({ task_id: '' }));
+            message.success('大纲展开任务已提交，完成后将自动弹出结果预览');
             eventBus.emit('background-task-created');
             setIsExpanding(false);
+            // 链路闭环：轮询任务，完成后自动弹结果预览（内嵌 AI 点评入口）
+            if (taskData.task_id) {
+              pollExpandTask(taskData.task_id, outlineId);
+            }
 
           } catch (error) {
             console.error('展开失败:', error);
@@ -1083,13 +1119,14 @@ export default function Outline() {
           purpose: string;
         }> | null;
       }> | null;
-    }
+    },
+    title?: string,
   ) => {
     modalApi.info({
       title: (
         <Space style={{ flexWrap: 'wrap' }}>
           <CheckCircleOutlined style={{ color: token.colorSuccess }} />
-          <span>《{outlineTitle}》展开信息</span>
+          <span>{title || `《${outlineTitle}》展开信息`}</span>
         </Space>
       ),
       width: isMobile ? '95%' : 900,
