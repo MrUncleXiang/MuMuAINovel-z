@@ -120,15 +120,17 @@ class ChapterRegenerator:
         instructions.append("# 章节修改指令\n")
         
         # 1. 来自分析的建议
-        if (analysis and 
-            regenerate_request.selected_suggestion_indices and 
+        if (analysis and
+            regenerate_request.selected_suggestion_indices and
             analysis.suggestions):
             
             instructions.append("## 📋 需要改进的问题（来自AI分析）：\n")
+            # 优先使用前端传入的建议原文（防止期间新分析覆盖导致序号错位）
+            suggestion_texts = regenerate_request.suggestions_text or analysis.suggestions
             for idx in regenerate_request.selected_suggestion_indices:
-                if 0 <= idx < len(analysis.suggestions):
-                    suggestion = analysis.suggestions[idx]
-                    instructions.append(f"{idx + 1}. {suggestion}")
+                if 0 <= idx < len(suggestion_texts):
+                    suggestions = suggestion_texts[idx]
+                    instructions.append(f"{idx + 1}. {suggestions}")
             instructions.append("")
         
         # 2. 用户自定义指令

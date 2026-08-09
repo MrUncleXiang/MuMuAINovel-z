@@ -20,6 +20,8 @@ class ChapterRegenerateRequest(BaseModel):
     
     # 基于分析建议
     selected_suggestion_indices: Optional[List[int]] = Field(None, description="选中的建议索引列表")
+    # 建议原文（由前端随勾选一并传入，避免期间新分析覆盖导致序号错位；后端优先使用）
+    suggestions_text: Optional[List[str]] = Field(None, description="选中的建议原文列表，与索引一一对应")
     
     # 自定义修改指令
     custom_instructions: Optional[str] = Field(None, description="用户自定义的修改要求")

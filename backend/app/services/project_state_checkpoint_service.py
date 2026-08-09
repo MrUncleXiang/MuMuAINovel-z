@@ -5,6 +5,7 @@ from typing import Any
 import uuid
 
 from sqlalchemy import delete, insert, select, update
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.career import Career, CharacterCareer
@@ -231,6 +232,11 @@ async def restore_project_state(
     pending_parent_links: list[tuple[str, str]] = []
     for field_name in restore_order:
         model = field_models[field_name]
+        # 快照序列化时 datetime 被转成了 ISO 字符串，恢复时转回 datetime（如 planted_at/resolved_at）
+        datetime_cols = [
+            c.name for c in model.__table__.columns
+            if isinstance(c.type, sa.DateTime) and c.name not in TIMESTAMP_COLUMNS
+        ]
         records = []
         for entity in getattr(snapshot, field_name):
             data = {"id": entity.id, **entity.data}
@@ -238,6 +244,12 @@ async def restore_project_state(
                 parent_id = data.pop("parent_org_id")
                 data["parent_org_id"] = None
                 pending_parent_links.append((entity.id, parent_id))
+            for col in datetime_cols:
+                if isinstance(data.get(col), str):
+                    try:
+                        data[col] = datetime.fromisoformat(data[col])
+                    except ValueError:
+                        data[col] = None
             records.append(data)
         if records:
             await db.execute(insert(model), records)

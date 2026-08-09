@@ -123,6 +123,7 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
         modification_source: string;
         custom_instructions?: string;
         selected_suggestion_indices: number[];
+        suggestions_text: string[];
         preserve_elements: {
           preserve_structure: boolean;
           preserve_dialogues: string[];
@@ -137,7 +138,14 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
       const requestData: RegenerationRequest = {
         modification_source: values.modification_source,
         custom_instructions: values.custom_instructions,
-        selected_suggestion_indices: selectedSuggestions,
+        // 仅分析建议/混合模式才传建议；custom 模式清空（避免残留勾选混入）
+        selected_suggestion_indices: values.modification_source === 'custom' ? [] : selectedSuggestions,
+        // 建议原文一并传入，防止序号错位（与索引一一对应）
+        suggestions_text: values.modification_source === 'custom'
+          ? []
+          : selectedSuggestions
+              .filter(idx => idx >= 0 && idx < suggestions.length)
+              .map(idx => suggestions[idx].content),
         preserve_elements: {
           preserve_structure: values.preserve_structure,
           preserve_dialogues: values.preserve_dialogues || [],
@@ -296,7 +304,11 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
           label="修改来源"
           rules={[{ required: true, message: '请选择修改来源' }]}
         >
-          <Radio.Group onChange={(e) => setModificationSource(e.target.value)}>
+          <Radio.Group onChange={(e) => {
+            setModificationSource(e.target.value);
+            // 切换模式时清空已勾选建议，避免残留混入其他模式
+            setSelectedSuggestions([]);
+          }}>
             <Radio value="custom">仅自定义修改</Radio>
             {hasAnalysis && suggestions.length > 0 && (
               <>
