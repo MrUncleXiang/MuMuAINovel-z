@@ -441,6 +441,9 @@ export default function Chapters() {
 
           if (task?.status === 'completed') {
             message.success('章节分析完成');
+            // 链路闭环：分析完成后自动打开结果弹窗（重新分析不再无反馈）
+            setAnalysisChapterId(chapterId);
+            setAnalysisVisible(true);
           } else if (task?.status === 'failed') {
             message.error(`章节分析失败: ${task.error_message || '未知错误'}`);
           }
