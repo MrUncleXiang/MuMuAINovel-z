@@ -2258,6 +2258,22 @@ def _build_analysis_task_status_payload(
     }
 
 
+async def _recover_stale_analysis_tasks(db: AsyncSession, tasks: list) -> list[str]:
+    """恢复卡死的分析任务：超过 30 分钟仍处于 pending/running 的任务标记为 failed"""
+    recovered: list[str] = []
+    cutoff = datetime.utcnow() - timedelta(minutes=30)
+    for task in tasks:
+        if task.status in ("pending", "running"):
+            updated_at = task.started_at or task.created_at
+            if updated_at and updated_at < cutoff:
+                task.status = "failed"
+                task.error_message = "任务超时（超过30分钟未更新），已自动标记为失败"
+                recovered.append(task.id)
+    if recovered:
+        await db.flush()
+    return recovered
+
+
 @router.get("/{chapter_id}/analysis/status", summary="查询章节分析任务状态", response_model=AnalysisTaskStatusResponse)
 async def get_analysis_task_status(
     chapter_id: str,
