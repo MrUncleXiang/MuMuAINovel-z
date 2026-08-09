@@ -1512,24 +1512,9 @@ async def generate_chapter_content_stream(
                 
                 # 🔢 计算 max_tokens 限制
                 # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
-                # 同时设置上限防止过长，下限确保基本可用
-                explicit_max = task_input.get("max_tokens")
-                if explicit_max:
-                    calculated_max_tokens = max(2000, min(int(explicit_max), 16000))
-                else:
-                    calculated_max_tokens = int(target_word_count * 3)
-                    calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
-                logger.info(f"📊 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
-                
-                # 🔢 计算 max_tokens 限制
-                # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
-                # 同时设置上限防止过长，下限确保基本可用
-                explicit_max = task_input.get("max_tokens")
-                if explicit_max:
-                    calculated_max_tokens = max(2000, min(int(explicit_max), 16000))
-                else:
-                    calculated_max_tokens = int(target_word_count * 3)
-                    calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
+                # 同时设置上限防止过长，下限确保基本可用（流式请求无 task_input，按目标字数计算）
+                calculated_max_tokens = int(target_word_count * 3)
+                calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
                 logger.info(f"📊 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
                 
                 # 准备生成参数
