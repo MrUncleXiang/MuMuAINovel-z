@@ -113,6 +113,7 @@ class OutlineAIEditResponse(BaseModel):
     key_points: Optional[list[str]] = Field(None, description="建议情节要点列表")
     emotion: Optional[str] = Field(None, description="建议情感基调")
     goal: Optional[str] = Field(None, description="建议叙事目标")
+    changes: Optional[list[str]] = Field(None, description="AI 变化摘要（改动点说明）")
 
 
 class OutlineAIDraftRequest(BaseModel):

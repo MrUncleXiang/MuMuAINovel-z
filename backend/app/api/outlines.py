@@ -2075,7 +2075,7 @@ async def outline_ai_edit(
     ))
     await db.commit()
 
-    return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"], scenes=parsed.get("scenes"), key_points=parsed.get("key_points"), emotion=parsed.get("emotion"), goal=parsed.get("goal"))
+    return OutlineAIEditResponse(title=parsed["title"], content=parsed["content"], scenes=parsed.get("scenes"), key_points=parsed.get("key_points"), emotion=parsed.get("emotion"), goal=parsed.get("goal"), changes=parsed.get("changes"))
 
 
 @router.post("/{outline_id}/ai-review", response_model=OutlineAIReviewResponse, summary="已展开章节AI点评（不入库）")

@@ -645,7 +645,7 @@ export const outlineApi = {
     api.post<unknown, import('../types').LLMComparisonBatch>('/outlines/comparison-batches', data),
 
   aiEdit: (outlineId: string, data: { instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
-    api.post<unknown, { title: string; content: string; scenes?: string[]; key_points?: string[]; emotion?: string; goal?: string }>(`/outlines/${outlineId}/ai-edit`, data),
+    api.post<unknown, { title: string; content: string; scenes?: string[]; key_points?: string[]; emotion?: string; goal?: string; changes?: string[] }>(`/outlines/${outlineId}/ai-edit`, data),
 
   aiDraft: (data: { project_id: string; order_index?: number; instruction?: string; skill_key?: string; provider_config_id?: string; model?: string }) =>
     api.post<unknown, { order_index: number; title: string; content: string }>('/outlines/ai-draft', data),

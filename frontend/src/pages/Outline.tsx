@@ -11,6 +11,8 @@ import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiP
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
 import SkillSelector from '../components/SkillSelector';
+import ReactDiffViewer from 'react-diff-viewer-continued';
+import { useThemeMode } from '../theme/useThemeMode';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
@@ -2567,11 +2569,38 @@ export default function Outline() {
 // 因此 AI 交互（输入/loading/请求/回填）全部封装在子组件内。
 // ============================================================
 
+interface PolishSnapshot {
+  title: string;
+  content: string;
+  scenes?: string[];
+  key_points?: string[];
+  emotion?: string;
+  goal?: string;
+}
+
 function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId: string; form: FormInstance; onRunningChange?: (running: boolean) => void }) {
   const [instruction, setInstruction] = useState('');
   const [skillKey, setSkillKey] = useState<string | undefined>();
   const [selection, setSelection] = useState<AIServiceSelection | undefined>();
   const [loading, setLoading] = useState(false);
+  // 润色对比状态：null = 无；有值 = 展示对比弹窗（不直接回填）
+  const [polishResult, setPolishResult] = useState<{
+    oldSnap: PolishSnapshot;
+    nextSnap: PolishSnapshot;
+    changes?: string[];
+  } | null>(null);
+
+  const snapFromForm = (): PolishSnapshot => {
+    const v = form.getFieldsValue();
+    return {
+      title: (v.title as string) || '',
+      content: (v.content as string) || '',
+      scenes: v.scenes ? String(v.scenes).split('\n').map(s => s.trim()).filter(Boolean) : [],
+      key_points: v.key_points ? String(v.key_points).split('\n').map(s => s.trim()).filter(Boolean) : [],
+      emotion: (v.emotion as string) || '',
+      goal: (v.goal as string) || '',
+    };
+  };
 
   const handleEdit = async () => {
     setLoading(true);
@@ -2583,15 +2612,19 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
         provider_config_id: selection?.provider_config_id,
         model: selection?.model,
       });
-      form.setFieldsValue({
-        title: res.title,
-        content: res.content,
-        scenes: res.scenes ? res.scenes.join('\n') : undefined,
-        key_points: res.key_points ? res.key_points.join('\n') : undefined,
-        emotion: res.emotion ?? undefined,
-        goal: res.goal ?? undefined,
+      // 不直接回填：先存快照，弹对比弹窗由用户确认
+      setPolishResult({
+        oldSnap: snapFromForm(),
+        nextSnap: {
+          title: res.title,
+          content: res.content,
+          scenes: res.scenes,
+          key_points: res.key_points,
+          emotion: res.emotion,
+          goal: res.goal,
+        },
+        changes: res.changes,
       });
-      message.success('AI 润色完成，已填入表单（含场景/要点/情感/目标）；请确认后再保存');
     } catch (error) {
       const apiError = error as ApiError;
       message.error(apiError.response?.data?.detail || 'AI 润色失败');
@@ -2599,6 +2632,22 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
       setLoading(false);
       onRunningChange?.(false);
     }
+  };
+
+  // 应用修改：回填表单
+  const handleApply = () => {
+    if (!polishResult) return;
+    const n = polishResult.nextSnap;
+    form.setFieldsValue({
+      title: n.title,
+      content: n.content,
+      scenes: n.scenes && n.scenes.length > 0 ? n.scenes.join('\n') : undefined,
+      key_points: n.key_points && n.key_points.length > 0 ? n.key_points.join('\n') : undefined,
+      emotion: n.emotion || undefined,
+      goal: n.goal || undefined,
+    });
+    setPolishResult(null);
+    message.success('已应用润色结果；请核对后点击「更新」保存');
   };
 
   return (
@@ -2629,7 +2678,80 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
           AI 润色
         </Button>
       </Space>
+      {/* 润色前后对比弹窗 */}
+      <Modal
+        title="🤖 AI 润色对比"
+        open={!!polishResult}
+        width={900}
+        centered
+        onCancel={() => setPolishResult(null)}
+        onOk={handleApply}
+        okText="应用修改"
+        cancelText="放弃"
+        styles={{ body: { maxHeight: 'calc(80vh - 200px)', overflowY: 'auto' } }}
+      >
+        {polishResult && (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {polishResult.changes && polishResult.changes.length > 0 && (
+              <Alert
+                type="info"
+                showIcon
+                message="AI 变化摘要"
+                description={polishResult.changes.map((c, i) => (
+                  <div key={i}>• {c}</div>
+                ))}
+              />
+            )}
+            <PolishDiffField label="标题" oldValue={polishResult.oldSnap.title} newValue={polishResult.nextSnap.title} />
+            <PolishDiffField label="内容" oldValue={polishResult.oldSnap.content} newValue={polishResult.nextSnap.content} />
+            <PolishDiffField
+              label="场景信息"
+              oldValue={(polishResult.oldSnap.scenes || []).join('\n')}
+              newValue={(polishResult.nextSnap.scenes || []).join('\n')}
+            />
+            <PolishDiffField
+              label="情节要点"
+              oldValue={(polishResult.oldSnap.key_points || []).join('\n')}
+              newValue={(polishResult.nextSnap.key_points || []).join('\n')}
+            />
+            <PolishDiffField label="情感基调" oldValue={polishResult.oldSnap.emotion || ''} newValue={polishResult.nextSnap.emotion || ''} />
+            <PolishDiffField label="叙事目标" oldValue={polishResult.oldSnap.goal || ''} newValue={polishResult.nextSnap.goal || ''} />
+          </Space>
+        )}
+      </Modal>
     </>
+  );
+}
+
+// 单字段前后对比（react-diff-viewer）
+function PolishDiffField({ label, oldValue, newValue }: { label: string; oldValue: string; newValue: string }) {
+  const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
+  const hasChange = oldValue !== newValue;
+  if (!hasChange && !oldValue && !newValue) return null;
+  return (
+    <div>
+      <div style={{ marginBottom: 4, fontWeight: 500 }}>{label}</div>
+      {hasChange ? (
+        <ReactDiffViewer
+          oldValue={oldValue || '（空）'}
+          newValue={newValue || '（空）'}
+          leftTitle="原文"
+          rightTitle="润色后"
+          splitView
+          useDarkTheme={resolvedMode === 'dark'}
+          styles={{
+            variables: {
+              light: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
+              dark: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
+            },
+            line: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+          }}
+        />
+      ) : (
+        <div style={{ fontSize: 13, color: token.colorTextSecondary }}>{oldValue || '（无内容）'}</div>
+      )}
+    </div>
   );
 }
 
