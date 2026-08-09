@@ -158,6 +158,8 @@ export default function Outline() {
           window.clearInterval(timer);
           if (autoShownTaskRef.current === taskId) return; // 防重复弹
           autoShownTaskRef.current = taskId;
+          // 完成后刷新大纲列表（更新 has_chapters 显示状态）
+          void refreshOutlines();
           // 完成后拉取展开结果并弹预览
           const res = await outlineApi.getOutlineChapters(outlineId);
           if (res && res.has_chapters) {

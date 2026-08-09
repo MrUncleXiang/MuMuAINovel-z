@@ -136,8 +136,9 @@ async def skill_chat(
         ai_service.default_system_prompt = system_prompt
     except Exception as e:
         logger.error(f"创建 AI 服务失败: {e}")
+        error_msg = str(e)  # except 变量在块结束后被删除，生成器闭包不能直接引用
         async def error_gen():
-            yield await SSEResponse.send_error(f"AI 服务配置错误: {str(e)}")
+            yield await SSEResponse.send_error(f"AI 服务配置错误: {error_msg}")
         return create_sse_response(error_gen())
 
     # 流式生成
