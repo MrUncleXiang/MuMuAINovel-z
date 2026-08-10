@@ -144,6 +144,13 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         return;
       }
 
+      // superseded：上一版分析因内容变更已失效，不应显示进度条（卡 100% 的根因之一）
+      if (taskData.status === 'superseded') {
+        setTask(null);
+        setError('上一版分析已因内容变更失效，请点击「开始分析」重新分析');
+        return;
+      }
+
       setTask(taskData);
 
       if (taskData.status === 'completed') {
@@ -948,7 +955,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           newContent={newGeneratedContent}
           wordCount={newContentWordCount}
           onApply={async () => {
-            // 应用新内容后刷新章节信息和分析
+            // 应用新内容后刷新章节信息和分析（显式流程：先触发新分析 → 再轮询，避免时序错位）
             setChapterInfo(null);
             setAnalysis(null);
 
@@ -967,7 +974,20 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
               console.error('重新加载章节失败:', error);
             }
 
-            // 刷新分析状态
+            // 触发新分析（内容已变更，旧分析已失效）
+            try {
+              const analysisResponse = await fetch(`/api/chapters/${chapterId}/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+              });
+              if (!analysisResponse.ok) {
+                console.warn('自动分析触发失败，可手动触发');
+              }
+            } catch (error) {
+              console.error('自动分析触发失败:', error);
+            }
+
+            // 刷新分析状态并启动轮询（新任务 running/pending → 前台进度显示）
             await fetchAnalysisStatus();
           }}
           onDiscard={() => {

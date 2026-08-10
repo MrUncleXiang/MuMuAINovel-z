@@ -104,29 +104,8 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
 
       message.success('新内容已应用！');
 
-      // 先调用 onApply 通知父组件刷新
-      onApply();
-
-      // 延迟触发章节分析，给父组件时间刷新
-      setTimeout(async () => {
-        try {
-          const analysisResponse = await fetch(`/api/chapters/${chapterId}/analyze`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            }
-          });
-
-          if (analysisResponse.ok) {
-            message.success('章节分析已开始，请稍后查看结果');
-          } else {
-            message.warning('章节分析触发失败，您可以手动触发分析');
-          }
-        } catch (analysisError) {
-          console.error('触发分析失败:', analysisError);
-          message.warning('章节分析触发失败，您可以手动触发分析');
-        }
-      }, 500);
+      // 通知父组件刷新并接管后续（触发分析 + 轮询由父组件统一处理，避免时序错位）
+      await onApply();
 
       onClose();
     } catch (error: unknown) {

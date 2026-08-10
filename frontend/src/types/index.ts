@@ -206,6 +206,10 @@ export type LLMComparisonCandidateStatus = 'pending' | 'running' | 'success' | '
 export interface LLMComparisonSelection {
   provider_config_id: string;
   model: string;
+  /** 该模型单独使用的 Skill；不填则跟随全局设置 */
+  skill_key?: string;
+  /** 该模型单独的目标字数；不填则跟随全局设置 */
+  target_word_count?: number;
 }
 
 export interface LLMComparisonCandidate {
@@ -782,7 +786,7 @@ export interface AnalysisTask {
   has_task: boolean;
   task_id: string | null;
   chapter_id: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'none';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'none' | 'superseded';
   progress: number;
   error_message?: string | null;
   auto_recovered?: boolean;
