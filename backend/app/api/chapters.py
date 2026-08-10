@@ -3052,11 +3052,8 @@ async def batch_generate_chapters_in_order(
     if not can_generate:
         raise HTTPException(status_code=400, detail=f"起始章节无法生成：{error_msg}")
 
-    # 提前检查上一章分析（避免任务提交后才失败；尊重 skip_analysis_check）
-    if not batch_request.skip_analysis_check:
-        analysis_ready, analysis_msg = await check_previous_analysis_ready(db, first_chapter)
-        if not analysis_ready:
-            raise HTTPException(status_code=409, detail=analysis_msg)
+    # 上一章分析检查不在创建时拦截：执行链会自动接管
+    # （失败/缺失自动重新分析、进行中等待；skip_analysis_check 勾选时跳过）
     # 批量生成必须同步分析，否则下一章无法获得最新角色状态、记忆和伏笔上下文。
     enable_analysis = True
     
@@ -3287,6 +3284,94 @@ async def cancel_batch_generation(
     }
 
 
+async def _ensure_previous_analysis_ready(
+    db: AsyncSession,
+    chapter: Chapter,
+    user_id: str,
+    ai_service: AIService,
+) -> tuple[bool, str]:
+    """
+    确保上一章分析就绪（自动接管）：
+    - 上一章分析失败/缺失/内容变更 → 自动重新分析（同步等待完成）
+    - 上一章分析进行中 → 轮询等待（最多 10 分钟）
+    返回 (是否就绪, 说明/错误)。
+    """
+    from datetime import datetime, timedelta
+
+    ready, msg = await check_previous_analysis_ready(db, chapter)
+    if ready:
+        return True, ""
+
+    if chapter.chapter_number <= 1:
+        return True, ""
+
+    # 获取上一章及其最新分析任务
+    prev_chapter = await db.scalar(
+        select(Chapter)
+        .where(Chapter.project_id == chapter.project_id)
+        .where(Chapter.chapter_number < chapter.chapter_number)
+        .order_by(Chapter.chapter_number.desc())
+        .limit(1)
+    )
+    if not prev_chapter or not prev_chapter.content:
+        return False, f"上一章（第{chapter.chapter_number - 1}章）还没有正文，无法生成第{chapter.chapter_number}章"
+
+    latest_task = await db.scalar(
+        select(AnalysisTask)
+        .where(AnalysisTask.chapter_id == prev_chapter.id)
+        .order_by(AnalysisTask.created_at.desc())
+        .limit(1)
+    )
+
+    # 情况 1：分析进行中 → 等待完成（轮询最多 10 分钟）
+    if latest_task and latest_task.status in ("pending", "running"):
+        deadline = datetime.utcnow() + timedelta(minutes=10)
+        timed_out = True
+        while datetime.utcnow() < deadline:
+            await asyncio.sleep(10)
+            await db.expire_all()
+            t = await db.scalar(
+                select(AnalysisTask)
+                .where(AnalysisTask.id == latest_task.id)
+            )
+            if t is None:
+                timed_out = False  # 任务消失 → 落重析分支
+                break
+            if t.status == "completed":
+                ok, _ = await check_previous_analysis_ready(db, chapter)
+                if ok:
+                    return True, "等待上一章分析完成"
+                timed_out = False  # 完成但内容仍不匹配 → 落重析分支
+                break
+            if t.status == "failed":
+                timed_out = False  # 失败 → 落重析分支
+                break
+        if timed_out:
+            return False, f"等待上一章（第{chapter.chapter_number - 1}章）分析超时（10分钟），任务已终止，请稍后重试"
+
+    # 情况 2：分析失败/缺失/内容变更 → 自动重新分析（同步等待）
+    logger.info(f"🔄 自动接管：上一章（第{chapter.chapter_number - 1}章）分析未就绪，自动重新分析...")
+    new_task = create_pending_analysis_task(chapter=prev_chapter, user_id=user_id)
+    db.add(new_task)
+    await db.commit()
+    await db.refresh(new_task)
+
+    ok = await analyze_chapter_background(
+        chapter_id=prev_chapter.id,
+        user_id=user_id,
+        project_id=chapter.project_id,
+        task_id=new_task.id,
+        ai_service=ai_service,
+    )
+    if not ok:
+        return False, f"自动重新分析上一章（第{chapter.chapter_number - 1}章）失败，任务已终止；可勾选「跳过上一章分析检查」继续"
+
+    ready, msg = await check_previous_analysis_ready(db, chapter)
+    if ready:
+        return True, f"已自动重新分析上一章（第{chapter.chapter_number - 1}章）"
+    return False, msg
+
+
 async def execute_batch_generation_in_order(
     batch_id: str,
     user_id: str,
@@ -3402,7 +3487,14 @@ async def execute_batch_generation_in_order(
                         raise Exception(f"前置条件不满足: {error_msg}")
                     analysis_ready, analysis_msg = await check_previous_analysis_ready(db_session, chapter)
                     if not analysis_ready and not getattr(task, 'skip_analysis_check', False):
-                        raise Exception(analysis_msg)
+                        # 自动接管：失败/缺失/变更自动重新分析，进行中等待；仍失败才中断
+                        analysis_ready, analysis_msg = await _ensure_previous_analysis_ready(
+                            db_session, chapter, user_id, ai_service
+                        )
+                        if analysis_ready:
+                            logger.info(f"⚙️ 自动接管分析完成：{analysis_msg}")
+                        else:
+                            raise Exception(analysis_msg)
                     
                     # 生成章节内容（复用现有流式生成逻辑的核心部分），传递model参数
                     # 并获取生成后的摘要（如果生成函数支持返回）
