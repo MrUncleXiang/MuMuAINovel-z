@@ -134,6 +134,14 @@ class ChapterGenerateRequest(BaseModel):
     skip_analysis_check: bool = Field(False, description="跳过上一章分析检查（不推荐，可能导致记忆/伏笔不连贯）")
 
 
+class ChapterAIEditRequest(BaseModel):
+    """AI 对话式修改章节请求（指令驱动最小修改，SSE 流式返回新全文）"""
+    instruction: str = Field(..., description="修改指令（自然语言），如：把开头改成更紧张的氛围")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+    skill_key: Optional[str] = Field(None, description="Skill 标识")
+
+
 class ChapterComparisonSelection(BaseModel):
     provider_config_id: str = Field(..., description="AI 服务配置ID")
     model: str = Field(..., min_length=1, max_length=150, description="模型名称")

@@ -28,6 +28,7 @@ from app.models.memory import PlotAnalysis, StoryMemory
 from app.models.batch_generation_task import BatchGenerationTask
 from app.models.regeneration_task import RegenerationTask
 from app.models.background_task import BackgroundTask
+from app.models.generation_history import GenerationHistory
 from app.schemas.llm_comparison import LLMComparisonSelection
 from app.schemas.chapter import (
     ChapterCreate,
@@ -41,6 +42,7 @@ from app.schemas.chapter import (
     BatchAnalyzeUnanalyzedResponse,
     ChapterAnalysisRequest,
     ChapterGenerateRequest,
+    ChapterAIEditRequest,
     ChapterComparisonCreateRequest,
     ChapterCandidateEditRequest,
     AnalysisComparisonCreateRequest,
@@ -4475,6 +4477,120 @@ async def update_chapter_expansion_plan(
 
 
 # ==================== 局部重写相关API ====================
+
+@router.post("/{chapter_id}/ai-edit-stream", summary="AI对话式修改章节（SSE）")
+async def chapter_ai_edit_stream(
+    chapter_id: str,
+    request: Request,
+    payload: ChapterAIEditRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    指令驱动的最小修改：AI 读全文，只改指令涉及的段落，SSE 流式返回完整新正文。
+    前端收到后 diff 对比确认应用。
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 校验章节与权限
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    await verify_project_access(chapter.project_id, user_id, db)
+    if not chapter.content or chapter.content.strip() == "":
+        raise HTTPException(status_code=400, detail="章节内容为空，无法修改")
+
+    # 预取上下文（项目/角色/大纲）
+    project_result = await db.execute(select(Project).where(Project.id == chapter.project_id))
+    project = project_result.scalar_one_or_none()
+    characters = list((await db.scalars(
+        select(Character).where(Character.project_id == chapter.project_id)
+    )).all())
+    characters_info = "\n".join(
+        f"- {c.name}: {(c.description or '')[:200]}" for c in characters
+    ) or "暂无角色信息"
+    outline_context = ""
+    if chapter.outline_id:
+        o = (await db.execute(select(Outline).where(Outline.id == chapter.outline_id))).scalar_one_or_none()
+        if o:
+            outline_context = f"标题：{o.title}\n内容：{(o.content or '')[:500]}"
+    if not outline_context:
+        outline_context = "（无大纲信息）"
+
+    project_id = chapter.project_id
+    original_content = chapter.content
+
+    async def event_generator():
+        from app.services.ai_provider_service import create_routed_ai_service
+        from app.services.skill_loader import build_skill_system_prompt
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+        async with AsyncSessionLocal() as bg_db:
+            try:
+                yield await SSEResponse.send_event("progress", {"message": "正在准备修改...", "progress": 5})
+
+                template = await PromptService.get_template("CHAPTER_AI_EDIT", user_id, bg_db)
+                prompt = PromptService.format_prompt(
+                    template,
+                    title=project.title if project else "未命名",
+                    genre=(project.genre if project else None) or "通用",
+                    narrative_perspective=(project.narrative_perspective if project else None) or "第三人称",
+                    characters_info=characters_info,
+                    outline_context=outline_context,
+                    chapter_content=original_content,
+                    instruction=payload.instruction,
+                )
+                system_prompt = build_skill_system_prompt(payload.skill_key)
+                if system_prompt:
+                    logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（AI对话修改）")
+
+                service = await create_routed_ai_service(
+                    bg_db,
+                    user_id=user_id,
+                    usage_type="chapter_write",
+                    provider_config_id=payload.provider_config_id,
+                    model=payload.model,
+                    project_id=project_id,
+                    chapter_id=chapter_id,
+                    enable_mcp=False,
+                )
+
+                yield await SSEResponse.send_event("progress", {"message": "AI 正在修改中...", "progress": 15})
+                full_content = ""
+                async for chunk in service.generate_text_stream(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=0.7,
+                ):
+                    full_content += chunk
+                    yield await SSEResponse.send_chunk(chunk)
+
+                if not full_content.strip():
+                    raise ValueError("AI 未返回内容")
+
+                # 记录生成历史
+                bg_db.add(GenerationHistory(
+                    project_id=project_id,
+                    chapter_id=chapter_id,
+                    prompt=prompt,
+                    generated_content=full_content[:500],
+                    model=payload.model or "default",
+                ))
+                await bg_db.commit()
+
+                yield await SSEResponse.send_result({"word_count": len(full_content)})
+                yield await SSEResponse.send_done()
+            except Exception as e:
+                logger.error(f"❌ AI对话修改失败: {str(e)}")
+                yield await SSEResponse.send_error(str(e))
+
+    return create_sse_response(event_generator())
+
 
 @router.post("/{chapter_id}/partial-regenerate-stream", summary="流式局部重写选中内容")
 async def partial_regenerate_stream(

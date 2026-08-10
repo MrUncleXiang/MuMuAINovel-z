@@ -804,6 +804,44 @@ class PromptService:
 </user_input>
 """
     
+    # 章节 AI 对话式修改提示词（编辑弹窗使用，指令驱动最小修改，SSE 返回完整新全文）
+    CHAPTER_AI_EDIT = """<system>
+你是资深网文编辑，根据用户的修改指令对章节正文做精准的最小修改。
+</system>
+
+<task>
+【修改指令】
+{instruction}
+
+【输出要求】
+- 只修改指令涉及的段落/句子/对话，其余内容一个字都不要改
+- 保持原有的叙事视角、文风、人称和段落结构
+- 不要添加解释、评论或 Markdown 标记，直接输出修改后的完整章节正文
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<outline_context priority="P1">
+【本章大纲】
+{outline_context}
+</outline_context>
+
+<chapter priority="P0">
+【当前章节正文（完整）】
+{chapter_content}
+</chapter>
+"""
+    
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
 你是《{project_title}》的作者，一位专注于{genre}类型的网络小说家。
@@ -3213,6 +3251,12 @@ class PromptService:
                 "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
                              "location", "atmosphere", "rules", "characters_info", "order_index", 
                              "outline_title", "outline_content", "outline_structure", "neighbors", "instruction"]
+            },
+            "CHAPTER_AI_EDIT": {
+                "name": "章节AI对话修改",
+                "category": "章节创作",
+                "description": "指令驱动的最小修改（编辑弹窗对话式，SSE返回完整新全文）",
+                "parameters": ["title", "genre", "narrative_perspective", "characters_info", "outline_context", "chapter_content", "instruction"]
             },
             "CHAPTER_GENERATION_ONE_TO_MANY": {
                 "name": "章节创作-1-N模式（第1章）",

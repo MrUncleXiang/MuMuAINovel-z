@@ -14,6 +14,7 @@ import { projectApi, writingStyleApi, chapterApi, llmComparisonApi, aiProviderAp
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection , AIProviderConfig} from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
+import ChapterAIChatEdit from '../components/ChapterAIChatEdit';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import ChapterReader from '../components/ChapterReader';
@@ -3183,6 +3184,21 @@ export default function Chapters() {
               disabled={isGenerating}
             />
           </Form.Item>
+
+          {/* 🤖 AI 对话式修改（指令驱动最小修改 → diff 确认） */}
+          {editingId && (
+            <ChapterAIChatEdit
+              chapterId={editingId}
+              originalContent={editorForm.getFieldValue('content') || ''}
+              onApply={(newContent) => {
+                editorForm.setFieldsValue({ content: newContent });
+                if (contentTextAreaRef.current) {
+                  const textArea = contentTextAreaRef.current.resizableTextArea?.textArea;
+                  if (textArea) textArea.scrollTop = 0;
+                }
+              }}
+            />
+          )}
 
           {generationMode === 'compare' && (
             <Card size="small" style={{ marginBottom: 16 }}>
