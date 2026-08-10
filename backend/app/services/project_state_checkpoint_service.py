@@ -1,8 +1,12 @@
 """Capture and validate chapter-bound project state checkpoints."""
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Optional
 import uuid
+
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 from sqlalchemy import delete, insert, select, update
 import sqlalchemy as sa
@@ -271,22 +275,23 @@ async def prepare_project_state_for_chapter_rewrite(
     memory_service: Any,
 ) -> ProjectStateCheckpoint:
     """Restore X-1 and supersede derived state from X onward before a rewrite."""
-    if chapter.chapter_number <= 1:
-        raise ValueError("第1章缺少写作前状态检查点，暂不能安全覆盖")
-    previous = await db.scalar(
-        select(ProjectStateCheckpoint)
-        .where(
-            ProjectStateCheckpoint.project_id == chapter.project_id,
-            ProjectStateCheckpoint.chapter_number == chapter.chapter_number - 1,
-            ProjectStateCheckpoint.status == "valid",
+    previous = None
+    if chapter.chapter_number > 1:
+        previous = await db.scalar(
+            select(ProjectStateCheckpoint)
+            .where(
+                ProjectStateCheckpoint.project_id == chapter.project_id,
+                ProjectStateCheckpoint.chapter_number == chapter.chapter_number - 1,
+                ProjectStateCheckpoint.status == "valid",
+            )
+            .order_by(ProjectStateCheckpoint.created_at.desc())
+            .limit(1)
         )
-        .order_by(ProjectStateCheckpoint.created_at.desc())
-        .limit(1)
-    )
+    # 第 1 章或前序无有效检查点：降级为只失效后续派生状态（不恢复前序状态）
+    # —— 允许用户修改/重写正文（如 AI 修改），代价是后续章节需按顺序重新分析
     if previous is None:
-        raise ValueError(
-            f"缺少第{chapter.chapter_number - 1}章有效状态检查点，暂不能安全覆盖"
-        )
+        await _supersede_derived_state_from(db, user_id=user_id, chapter=chapter, memory_service=memory_service)
+        return None
 
     affected_chapters = list((await db.scalars(
         select(Chapter).where(
@@ -305,7 +310,39 @@ async def prepare_project_state_for_chapter_rewrite(
 
     snapshot = ProjectStateSnapshotV1.model_validate(previous.state_json)
     await restore_project_state(db, project_id=chapter.project_id, snapshot=snapshot)
-    affected_ids = [affected.id for affected in affected_chapters]
+    await _supersede_derived_state_from(db, user_id=user_id, chapter=chapter, memory_service=memory_service, affected_chapters=affected_chapters)
+    return previous
+
+
+async def _supersede_derived_state_from(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    chapter: Chapter,
+    memory_service: Any,
+    affected_chapters: Optional[list] = None,
+) -> None:
+    """失效当前章及之后章节的派生状态（分析/检查点/向量记忆），供重写前调用。
+
+    与正常路径不同：不恢复前序状态（第 1 章或前序无检查点时的降级路径）。
+    """
+    if affected_chapters is None:
+        affected_chapters = list((await db.scalars(
+            select(Chapter).where(
+                Chapter.project_id == chapter.project_id,
+                Chapter.chapter_number >= chapter.chapter_number,
+            )
+        )).all())
+    for affected in affected_chapters:
+        try:
+            await memory_service.delete_chapter_memories(
+                user_id=user_id,
+                project_id=chapter.project_id,
+                chapter_id=affected.id,
+            )
+        except Exception:
+            logger.warning(f"⚠️ 重写前清理第{affected.chapter_number}章向量记忆失败（继续）")
+    affected_ids = [a.id for a in affected_chapters]
     if affected_ids:
         from app.models.memory import PlotAnalysis
 
@@ -328,7 +365,6 @@ async def prepare_project_state_for_chapter_rewrite(
         chapter_number=chapter.chapter_number,
         reason=f"第{chapter.chapter_number}章正文准备重建",
     )
-    return previous
 
 
 async def list_valid_project_checkpoints(
