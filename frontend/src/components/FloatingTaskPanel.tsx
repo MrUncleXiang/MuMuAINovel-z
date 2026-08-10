@@ -32,6 +32,21 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   const [collapsed, setCollapsed] = useState(true); // 默认收起
   const userCollapsedRef = useRef(false); // 用户手动收起标记
   const { token } = theme.useToken();
+  // 已通知终态的任务（防重复弹提示）
+  const notifiedTasksRef = useRef<Set<string>>(new Set());
+
+  // 任务类型中文名
+  const taskTypeLabel = (type: string): string => {
+    const map: Record<string, string> = {
+      chapter_generate: '章节生成',
+      chapter_batch: '批量生成',
+      outline_new: '大纲生成',
+      outline_continue: '大纲续写',
+      outline_expand: '大纲展开',
+      batch_expand: '批量展开',
+    };
+    return map[type] || type;
+  };
 
   // 加载任务列表
   const loadTasks = useCallback(async () => {
@@ -39,7 +54,33 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     setLoading(true);
     try {
       const result = await getProjectTasks(projectId);
-      setTaskList(result.items || []);
+      const items = result.items || [];
+      setTaskList(items);
+      // 终态主动通知（完成/失败/取消，每个任务只通知一次）
+      items.forEach((t) => {
+        if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
+          if (notifiedTasksRef.current.has(t.id)) return;
+          notifiedTasksRef.current.add(t.id);
+          if (t.task_type === 'chapter_batch') {
+            const info = (t.task_result || {}) as { completed?: number; total?: number };
+            if (t.status === 'completed') {
+              message.success(`批量生成完成：成功 ${info.completed ?? ''} 章（可在章节页查看正文）`);
+            } else if (t.status === 'failed') {
+              message.error(`批量生成失败：${(t.error_message || t.status_message || '未知错误').slice(0, 200)}`);
+            } else {
+              message.warning('批量生成已取消');
+            }
+          } else if (t.status === 'completed') {
+            message.success(`${taskTypeLabel(t.task_type)}任务完成`);
+          } else if (t.status === 'failed') {
+            message.error(`${taskTypeLabel(t.task_type)}任务失败：${(t.error_message || t.status_message || '未知错误').slice(0, 200)}`);
+          }
+        }
+      });
+      // 上限保护：避免长期会话集合无限增长
+      if (notifiedTasksRef.current.size > 200) {
+        notifiedTasksRef.current = new Set([...notifiedTasksRef.current].slice(-100));
+      }
     } catch (error) {
       console.error('加载任务列表失败:', error);
     } finally {

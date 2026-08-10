@@ -3052,6 +3052,14 @@ async def batch_generate_chapters_in_order(
     if not can_generate:
         raise HTTPException(status_code=400, detail=f"起始章节无法生成：{error_msg}")
 
+    # 提前检查上一章分析（避免任务提交后才失败；尊重 skip_analysis_check）
+    if not batch_request.skip_analysis_check:
+        analysis_ready, analysis_msg = await check_previous_analysis_ready(db, first_chapter)
+        if not analysis_ready:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{analysis_msg}（或勾选「跳过上一章分析检查」继续）",
+            )
     # 批量生成必须同步分析，否则下一章无法获得最新角色状态、记忆和伏笔上下文。
     enable_analysis = True
     

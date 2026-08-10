@@ -157,18 +157,34 @@ export default function Outline() {
   const [volumeGenBusy, setVolumeGenBusy] = useState(false);
   const [volumeGenPending, setVolumeGenPending] = useState<Array<{ chapter_number: number; title: string }>>([]);
 
-  // 打开卷内生成：识别本卷未生成章节
+  // 打开卷内生成：识别本卷未生成章节（getOutlineChapters 无 content 字段，按 status/word_count 判定）
   const handleVolumeGenerate = async (outline: Outline) => {
     try {
       const res = await outlineApi.getOutlineChapters(outline.id);
-      const pending = (res.chapters || [])
-        .filter((ch: { chapter_number: number; title: string; status?: string; content?: string }) =>
-          !ch.content || ch.content.trim() === '' || ch.status === 'draft'
-        )
-        .map((ch: { chapter_number: number; title: string }) => ({ chapter_number: ch.chapter_number, title: ch.title }));
+      const chapters = res.chapters || [];
+      // 未生成 = 草稿状态 或 字数为 0
+      const isPending = (ch: { status?: string; word_count?: number }) =>
+        ch.status === 'draft' || !ch.word_count;
+      // 从第一个未生成章节起，只取连续段（避免 start+count 连续区间覆盖中间已写章节）
+      const firstIdx = chapters.findIndex(isPending);
+      let pending: Array<{ chapter_number: number; title: string }> = [];
+      let skippedWritten = 0;
+      if (firstIdx >= 0) {
+        for (let i = firstIdx; i < chapters.length; i++) {
+          if (isPending(chapters[i])) {
+            pending.push({ chapter_number: chapters[i].chapter_number, title: chapters[i].title });
+          } else {
+            skippedWritten++;
+            break; // 遇到已写章节即止，只生成连续段
+          }
+        }
+      }
       if (pending.length === 0) {
         message.info(`《${outline.title}》各章节都已有内容，无需生成`);
         return;
+      }
+      if (skippedWritten > 0) {
+        message.warning(`《${outline.title}》中间有已写章节，本次仅从第${pending[0].chapter_number}章起连续生成 ${pending.length} 章，之后的章节请下次再生成`);
       }
       setVolumeGenPending(pending);
       setVolumeGenOutline(outline);
