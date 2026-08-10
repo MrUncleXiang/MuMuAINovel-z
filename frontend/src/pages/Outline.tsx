@@ -2721,13 +2721,14 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
       <Modal
         title="🤖 AI 润色对比"
         open={!!polishResult}
-        width={900}
+        width="95%"
         centered
         onCancel={() => setPolishResult(null)}
         onOk={handleApply}
         okText="应用修改"
         cancelText="放弃"
-        styles={{ body: { maxHeight: 'calc(80vh - 200px)', overflowY: 'auto' } }}
+        style={{ maxWidth: 1500 }}
+        styles={{ body: { maxHeight: 'calc(85vh - 180px)', overflowY: 'auto', padding: 20 } }}
       >
         {polishResult && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -2735,9 +2736,9 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
               <Alert
                 type="info"
                 showIcon
-                message="AI 变化摘要"
+                message={<span style={{ fontWeight: 600 }}>AI 变化摘要</span>}
                 description={polishResult.changes.map((c, i) => (
-                  <div key={i}>• {c}</div>
+                  <div key={i} style={{ fontSize: 13, lineHeight: 1.8 }}>• {c}</div>
                 ))}
               />
             )}
@@ -2770,25 +2771,28 @@ function PolishDiffField({ label, oldValue, newValue }: { label: string; oldValu
   if (!hasChange && !oldValue && !newValue) return null;
   return (
     <div>
-      <div style={{ marginBottom: 4, fontWeight: 500 }}>{label}</div>
+      <div style={{ marginBottom: 6, fontWeight: 600, fontSize: 14 }}>{label}</div>
       {hasChange ? (
-        <ReactDiffViewer
-          oldValue={oldValue || '（空）'}
-          newValue={newValue || '（空）'}
-          leftTitle="原文"
-          rightTitle="润色后"
-          splitView
-          useDarkTheme={resolvedMode === 'dark'}
-          styles={{
-            variables: {
-              light: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
-              dark: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
-            },
-            line: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-          }}
-        />
+        <div style={{ maxHeight: 320, overflowY: 'auto', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 6 }}>
+          <ReactDiffViewer
+            oldValue={oldValue || '（空）'}
+            newValue={newValue || '（空）'}
+            leftTitle="原文"
+            rightTitle="润色后"
+            splitView
+            useDarkTheme={resolvedMode === 'dark'}
+            styles={{
+              variables: {
+                light: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
+                dark: { diffViewerBackground: token.colorBgContainer, diffViewerColor: token.colorText },
+              },
+              line: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13.5, lineHeight: 1.9, padding: '6px 8px' },
+              contentText: { fontSize: 13.5, lineHeight: 1.9 },
+            }}
+          />
+        </div>
       ) : (
-        <div style={{ fontSize: 13, color: token.colorTextSecondary }}>{oldValue || '（无内容）'}</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.9, color: token.colorTextSecondary }}>{oldValue || '（无内容）'}</div>
       )}
     </div>
   );
