@@ -10,7 +10,7 @@ import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
-import SkillSelector from '../components/SkillSelector';
+import SkillSelector, { SKILL_CATEGORIES } from '../components/SkillSelector';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useThemeMode } from '../theme/useThemeMode';
 import LLMMultiSelector from '../components/LLMMultiSelector';
@@ -752,7 +752,7 @@ export default function Outline() {
             />
           </Form.Item>
           <Form.Item label="应用 Skill" name="skill_key" style={{ marginBottom: 8 }}>
-            <SkillSelector disabled={outlineComparisonBusy} />
+            <SkillSelector disabled={outlineComparisonBusy} categories={SKILL_CATEGORIES.OUTLINE} />
           </Form.Item>
           {hasOutlines && (
             <Form.Item
@@ -2700,7 +2700,7 @@ function EditOutlineAISection({ outlineId, form, onRunningChange }: { outlineId:
         style={{ marginBottom: 8 }}
       />
       <Form.Item label="应用 Skill" style={{ marginBottom: 8 }}>
-        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} categories={SKILL_CATEGORIES.OUTLINE} />
       </Form.Item>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
       <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
@@ -2839,7 +2839,7 @@ function DraftOutlineAISection({ form, projectId, onRunningChange }: { form: For
         style={{ marginBottom: 8 }}
       />
       <Form.Item label="应用 Skill" style={{ marginBottom: 8 }}>
-        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} categories={SKILL_CATEGORIES.OUTLINE} />
       </Form.Item>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
       <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
@@ -2899,7 +2899,7 @@ function ExpandReviewSection({ outlineId }: { outlineId: string }) {
         style={{ marginBottom: 8 }}
       />
       <Form.Item label="应用 Skill" style={{ marginBottom: 8 }}>
-        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+        <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} categories={SKILL_CATEGORIES.OUTLINE} />
       </Form.Item>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />
       <Space direction="vertical" size={4} style={{ marginTop: 4, width: '100%' }}>
@@ -2983,7 +2983,7 @@ function ExpandAdviceSection({ outlineId, form }: { outlineId: string; form: For
       />
       <Space wrap size={8} style={{ marginBottom: 8, width: '100%' }}>
         <Form.Item label="应用 Skill" style={{ marginBottom: 0 }}>
-          <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} />
+          <SkillSelector value={skillKey} onChange={setSkillKey} disabled={loading} categories={SKILL_CATEGORIES.REVIEW} />
         </Form.Item>
       </Space>
       <AIServiceSelector usageType="outline" value={selection} onChange={setSelection} disabled={loading} />

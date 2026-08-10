@@ -6,6 +6,7 @@ import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
+import SkillSelector, { SKILL_CATEGORIES } from '../components/SkillSelector';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
@@ -3144,32 +3145,7 @@ export default function Chapters() {
                 tooltip="选择一个 Skill 工作流指导 AI 创作，不选则使用标准创作流程"
                 style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
               >
-                <Select
-                  placeholder="不使用 Skill（标准创作）"
-                  value={selectedSkillKey}
-                  onChange={setSelectedSkillKey}
-                  allowClear
-                  disabled={isGenerating}
-                  showSearch
-                  optionFilterProp="label"
-                >
-                  {writingSkills.map(skill => (
-                    <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span>{skill.template_name}</span>
-                        <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
-                      </div>
-                    </Select.Option>
-                  ))}
-                </Select>
-                {selectedSkillKey && (() => {
-                  const skill = availableSkills.find(s => s.template_key === selectedSkillKey);
-                  return skill ? (
-                    <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
-                      ✓ {skill.description}
-                    </div>
-                  ) : null;
-                })()}
+                <SkillSelector value={selectedSkillKey} onChange={setSelectedSkillKey} disabled={isGenerating} categories={SKILL_CATEGORIES.WRITING} />
               </Form.Item>
             )}
 

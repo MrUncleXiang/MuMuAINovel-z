@@ -23,7 +23,7 @@ import {
 import { ssePost } from '../utils/sseClient';
 import { SSEProgressModal } from './SSEProgressModal';
 import AIServiceSelector, { type AIServiceSelection } from './AIServiceSelector';
-import SkillSelector from './SkillSelector';
+import SkillSelector, { SKILL_CATEGORIES } from './SkillSelector';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -414,7 +414,7 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
 
             {/* Skill */}
             <Form.Item label="应用 Skill" tooltip="选择一个 Skill 工作流指导重写，不选则使用标准流程" style={{ marginBottom: 12 }}>
-              <SkillSelector value={skillKey} onChange={setSkillKey} />
+              <SkillSelector value={skillKey} onChange={setSkillKey} categories={SKILL_CATEGORIES.WRITING} />
             </Form.Item>
 
             {/* 生成参数 */}
