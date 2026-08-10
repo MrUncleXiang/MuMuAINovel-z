@@ -4509,7 +4509,7 @@ async def chapter_ai_edit_stream(
         select(Character).where(Character.project_id == chapter.project_id)
     )).all())
     characters_info = "\n".join(
-        f"- {c.name}: {(c.description or '')[:200]}" for c in characters
+        f"- {c.name}: {(c.background or '')[:200]}" for c in characters
     ) or "暂无角色信息"
     outline_context = ""
     if chapter.outline_id:
