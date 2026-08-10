@@ -34,6 +34,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   const { token } = theme.useToken();
   // 已通知终态的任务（防重复弹提示）
   const notifiedTasksRef = useRef<Set<string>>(new Set());
+  // 首次加载基线标记：历史终态任务只记录不通知（避免每次刷新都弹）
+  const initializedRef = useRef(false);
 
   // 任务类型中文名
   const taskTypeLabel = (type: string): string => {
@@ -56,11 +58,12 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
       const result = await getProjectTasks(projectId);
       const items = result.items || [];
       setTaskList(items);
-      // 终态主动通知（完成/失败/取消，每个任务只通知一次）
+      // 终态主动通知（完成/失败/取消）——仅通知本会话内的新变化，历史任务只建基线
       items.forEach((t) => {
         if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
           if (notifiedTasksRef.current.has(t.id)) return;
           notifiedTasksRef.current.add(t.id);
+          if (!initializedRef.current) return; // 首次加载：只记录基线，不弹提示
           if (t.task_type === 'chapter_batch') {
             const info = (t.task_result || {}) as { completed?: number; total?: number };
             if (t.status === 'completed') {
@@ -81,6 +84,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
       if (notifiedTasksRef.current.size > 200) {
         notifiedTasksRef.current = new Set([...notifiedTasksRef.current].slice(-100));
       }
+      // 首次加载完成，后续轮询发现的新终态才通知
+      initializedRef.current = true;
     } catch (error) {
       console.error('加载任务列表失败:', error);
     } finally {
