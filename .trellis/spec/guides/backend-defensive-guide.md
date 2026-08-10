@@ -11,6 +11,13 @@ python3 -m pyflakes app/ | grep -E "undefined name"
 ```
 **`undefined name` 必须清零**（`ExceptionGroup` 是 Python 3.11 内置，唯一允许的假阳性）。
 
+**一键执行**（推荐，含语法+类型检查）：
+
+```bash
+cd source && ./scripts/precommit-check.sh          # 静态扫描+语法+tsc
+cd source && ./scripts/precommit-check.sh --container  # 加容器重启健康验证（后端改动必跑）
+```
+
 本仓库事故模式：同事提交常带"调用了不存在的函数/变量"（`task_input`、`_recover_stale_analysis_tasks`），运行到即 500。扫描只需 1 分钟，能拦下全部这类问题。
 
 ## 高危模式速查
