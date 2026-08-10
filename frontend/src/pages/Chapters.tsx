@@ -436,7 +436,7 @@ export default function Chapters() {
 
       activeIds.forEach((chapterId) => {
         const task = tasksMap[chapterId];
-        if (!task || task.status === 'completed' || task.status === 'failed' || task.status === 'none') {
+        if (!task || task.status === 'completed' || task.status === 'failed' || task.status === 'none' || task.status === 'superseded') {
           activeAnalysisPollingIdsRef.current.delete(chapterId);
 
           if (task?.status === 'completed') {
@@ -446,6 +446,9 @@ export default function Chapters() {
             setAnalysisVisible(true);
           } else if (task?.status === 'failed') {
             message.error(`章节分析失败: ${task.error_message || '未知错误'}`);
+          } else if (task?.status === 'superseded') {
+            // 内容变更导致分析失效：停止轮询该章，避免无限轮询
+            console.warn(`章节 ${chapterId} 的分析已因内容变更失效`);
           }
         }
       });

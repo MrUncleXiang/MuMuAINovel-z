@@ -57,7 +57,7 @@ interface NavigationData {
 }
 
 interface AnalysisTaskStatus {
-  status: 'none' | 'pending' | 'running' | 'completed' | 'failed';
+  status: 'none' | 'pending' | 'running' | 'completed' | 'failed' | 'superseded';
   progress: number;
   error_message?: string | null;
 }
@@ -239,6 +239,14 @@ const ChapterReader: React.FC = () => {
             setAnalyzing(false);
             message.error({
               content: `分析失败：${error_message || '未知错误'}`,
+              key: 'analyze'
+            });
+            return;
+          } else if (status === 'superseded') {
+            // 分析已因内容变更失效：停止轮询并提示（避免无限轮询到超时）
+            setAnalyzing(false);
+            message.warning({
+              content: '分析已因内容变更失效，请重新触发分析',
               key: 'analyze'
             });
             return;
