@@ -3329,7 +3329,7 @@ async def _ensure_previous_analysis_ready(
         timed_out = True
         while datetime.utcnow() < deadline:
             await asyncio.sleep(10)
-            await db.expire_all()
+            db.expire_all()  # 同步方法，不可 await（AsyncSession 本地操作）
             t = await db.scalar(
                 select(AnalysisTask)
                 .where(AnalysisTask.id == latest_task.id)
@@ -3470,6 +3470,9 @@ async def execute_batch_generation_in_order(
                     if not chapter:
                         raise Exception(f"章节 {chapter_id} 不存在")
                     
+                    # 预缓存章节号（后续异常处理用，避免访问已过期属性）
+                    current_chapter_number = chapter.chapter_number
+                    
                     # 更新当前章节序号和重试次数
                     async with write_lock:
                         task.current_chapter_number = chapter.chapter_number
@@ -3580,7 +3583,8 @@ async def execute_batch_generation_in_order(
                     if task.status == 'cancelled':
                         logger.info(f"🛑 批量生成任务已被取消: {batch_id}")
                         return
-                    error_msg = f"第{chapter.chapter_number if chapter else '?'}章出错: {last_error}"
+                    # 用预缓存的章节号（异常时 chapter 可能已过期，访问属性会触发额外加载/掩盖根因）
+                    error_msg = f"第{current_chapter_number}章出错: {last_error}"
                     logger.error(f"❌ {error_msg}")
                     
                     retry_count += 1
@@ -3638,7 +3642,8 @@ async def execute_batch_generation_in_order(
         logger.info(f"✅ 批量生成任务全部完成: {batch_id}, 成功生成 {task.completed_chapters} 章")
         
     except Exception as e:
-        logger.error(f"❌ 批量生成任务异常: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"❌ 批量生成任务异常: {str(e)}\n{traceback.format_exc()}")
         if db_session and task:
             try:
                 async with write_lock:
