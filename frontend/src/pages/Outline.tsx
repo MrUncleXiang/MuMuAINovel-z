@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useRef } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, Divider, theme } from 'antd';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, Divider, Checkbox, theme } from 'antd';
 import type { FormInstance } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
@@ -7,8 +7,8 @@ import { eventBus } from '../store/eventBus';
 import { getProjectTasks, getTaskStatus, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
-import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi } from '../services/api';
-import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection } from '../types';
+import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiProviderApi, writingStyleApi } from '../services/api';
+import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection, Outline } from '../types';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
 import SkillSelector, { SKILL_CATEGORIES } from '../components/SkillSelector';
 import ReactDiffViewer from 'react-diff-viewer-continued';
@@ -145,6 +145,87 @@ export default function Outline() {
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) =>
     `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+  // ── 卷内正文一键生成（大纲页卷卡片入口）──
+  const [volumeGenVisible, setVolumeGenVisible] = useState(false);
+  const [volumeGenOutline, setVolumeGenOutline] = useState<Outline | null>(null);
+  const [volumeGenStyles, setVolumeGenStyles] = useState<Array<{ id: number; name: string }>>([]);
+  const [volumeGenStyleId, setVolumeGenStyleId] = useState<number | undefined>();
+  const [volumeGenWords, setVolumeGenWords] = useState(3000);
+  const [volumeGenSelection, setVolumeGenSelection] = useState<AIServiceSelection | undefined>();
+  const [volumeGenSkill, setVolumeGenSkill] = useState<string | undefined>();
+  const [volumeGenSkip, setVolumeGenSkip] = useState(false);
+  const [volumeGenBusy, setVolumeGenBusy] = useState(false);
+  const [volumeGenPending, setVolumeGenPending] = useState<Array<{ chapter_number: number; title: string }>>([]);
+
+  // 打开卷内生成：识别本卷未生成章节
+  const handleVolumeGenerate = async (outline: Outline) => {
+    try {
+      const res = await outlineApi.getOutlineChapters(outline.id);
+      const pending = (res.chapters || [])
+        .filter((ch: { chapter_number: number; title: string; status?: string; content?: string }) =>
+          !ch.content || ch.content.trim() === '' || ch.status === 'draft'
+        )
+        .map((ch: { chapter_number: number; title: string }) => ({ chapter_number: ch.chapter_number, title: ch.title }));
+      if (pending.length === 0) {
+        message.info(`《${outline.title}》各章节都已有内容，无需生成`);
+        return;
+      }
+      setVolumeGenPending(pending);
+      setVolumeGenOutline(outline);
+      // 加载写作风格
+      if (!currentProject?.id) return;
+      try {
+        const styles = await writingStyleApi.getProjectStyles(currentProject.id);
+        setVolumeGenStyles(styles.styles || []);
+        const def = (styles.styles || []).find((s: { is_default?: boolean }) => s.is_default);
+        setVolumeGenStyleId(def ? def.id : (styles.styles || [])[0]?.id);
+      } catch { /* 风格加载失败忽略 */ }
+      setVolumeGenVisible(true);
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '获取该卷章节失败');
+    }
+  };
+
+  // 提交卷内批量生成（复用后端按序+章后分析流程）
+  const handleVolumeGenerateSubmit = async () => {
+    if (!volumeGenOutline || volumeGenPending.length === 0) return;
+    setVolumeGenBusy(true);
+    try {
+      const requestBody = {
+        start_chapter_number: volumeGenPending[0].chapter_number,
+        count: volumeGenPending.length,
+        style_id: volumeGenStyleId,
+        target_word_count: volumeGenWords,
+        enable_analysis: true,
+        skip_analysis_check: volumeGenSkip || false,
+        provider_config_id: volumeGenSelection?.provider_config_id,
+        model: volumeGenSelection?.model,
+        skill_key: volumeGenSkill,
+      };
+      if (!currentProject?.id) return;
+      const response = await fetch(`/api/chapters/project/${currentProject.id}/batch-generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(err.detail || '创建批量生成任务失败');
+      }
+      await response.json();
+      setVolumeGenVisible(false);
+      message.success(`已开始生成《${volumeGenOutline.title}》${volumeGenPending.length} 章正文（按序生成+逐章分析），可在右下角任务面板查看进度`);
+      eventBus.emit('background-task-created');
+      void refreshOutlines();
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error(apiError.response?.data?.detail || '创建批量生成任务失败');
+    } finally {
+      setVolumeGenBusy(false);
+    }
+  };
+  // ────────────────────────────────────────────
   // 自动弹出展开结果预览的防重复标记（记录已自动弹过的 task_id）
   const autoShownTaskRef = useRef<string | null>(null);
 
@@ -2305,6 +2386,16 @@ export default function Outline() {
                               展开
                             </Button>
                           )}
+                          {currentProject?.outline_mode === 'one-to-many' && (
+                            <Button
+                              type="primary"
+                              icon={<EditOutlined />}
+                              onClick={() => handleVolumeGenerate(item)}
+                              size={isMobile ? 'middle' : 'small'}
+                            >
+                              写这卷正文
+                            </Button>
+                          )}
                           <Button
                             icon={<EditOutlined />}
                             onClick={() => handleOpenEditModal(item.id)}
@@ -2423,6 +2514,64 @@ export default function Outline() {
         onSelectionChange={(left, right) => setOutlineDiffIds([left, right])}
         onClose={() => setOutlineDiffVisible(false)}
       />
+
+      {/* 卷内正文一键生成配置弹窗 */}
+      <Modal
+        title="✍️ 写这卷正文"
+        open={volumeGenVisible}
+        width={640}
+        centered
+        onCancel={() => !volumeGenBusy && setVolumeGenVisible(false)}
+        okText="开始生成"
+        cancelText="取消"
+        okButtonProps={{ disabled: volumeGenBusy }}
+        confirmLoading={volumeGenBusy}
+        onOk={handleVolumeGenerateSubmit}
+      >
+        {volumeGenOutline && volumeGenPending.length > 0 && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert
+              type="info"
+              showIcon
+              message={`《${volumeGenOutline.title}》：本卷 ${volumeGenPending.length} 个章节尚无正文，将按顺序生成（每章生成后自动分析，保证上下文连贯）`}
+              description={
+                <div>
+                  {volumeGenPending.map((ch) => (
+                    <Tag key={ch.chapter_number} style={{ margin: 2 }}>第{ch.chapter_number}章</Tag>
+                  ))}
+                  <div style={{ marginTop: 6, fontSize: 12, color: token.colorTextSecondary }}>
+                    预计耗时 ≈ {volumeGenPending.length * 5} 分钟（每章生成+分析约 5 分钟）；需保证"前一章写完并分析过"，否则会提示或中断
+                  </div>
+                </div>
+              }
+            />
+            <Space wrap>
+              <Form.Item label="写作风格" style={{ marginBottom: 0 }}>
+                <Select
+                  style={{ width: 220 }}
+                  value={volumeGenStyleId}
+                  onChange={setVolumeGenStyleId}
+                  options={volumeGenStyles.map(s => ({ value: s.id, label: s.name }))}
+                  placeholder="请选择写作风格"
+                />
+              </Form.Item>
+              <Form.Item label="目标字数" style={{ marginBottom: 0 }}>
+                <InputNumber min={500} max={10000} step={500} value={volumeGenWords} onChange={(v) => setVolumeGenWords(v || 3000)} />
+              </Form.Item>
+            </Space>
+            <AIServiceSelector usageType="chapter_write" value={volumeGenSelection} onChange={setVolumeGenSelection} />
+            <Form.Item label="应用 Skill" style={{ marginBottom: 0 }}>
+              <SkillSelector value={volumeGenSkill} onChange={setVolumeGenSkill} categories={SKILL_CATEGORIES.WRITING} />
+            </Form.Item>
+            <Checkbox checked={volumeGenSkip} onChange={(e) => setVolumeGenSkip(e.target.checked)}>
+              跳过上一章分析检查
+              <span style={{ fontSize: 12, color: token.colorTextTertiary, marginLeft: 8 }}>
+                （上一章分析失败/未完成导致无法生成时勾选；可能导致记忆/伏笔不连贯）
+              </span>
+            </Checkbox>
+          </Space>
+        )}
+      </Modal>
 
       <Modal
         title="编辑大纲"
