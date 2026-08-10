@@ -3536,11 +3536,15 @@ async def execute_batch_generation_in_order(
                         return
                     logger.info(f"🔍 开始正式分析章节: 第{chapter.chapter_number}章")
 
+                    # 分析复用生成所选的服务/模型（避免默认路由 flash 截断导致 JSON 解析失败）
                     analysis_result = await analyze_chapter_background(
                         chapter_id=chapter_id,
                         user_id=user_id,
                         project_id=task.project_id,
-                        task_id=analysis_task.id
+                        task_id=analysis_task.id,
+                        ai_service=ai_service,
+                        model=custom_model,
+                        enable_mcp=enable_mcp,
                     )
 
                     if not analysis_result:
