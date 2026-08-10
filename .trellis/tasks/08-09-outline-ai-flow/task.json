@@ -23,7 +23,7 @@
     "08-09-polish-diff",
     "08-09-expand-flow-closure"
   ],
-  "parent": "08-09-outline-interaction-revamp",
+  "parent": null,
   "relatedFiles": [],
   "notes": "",
   "meta": {}
