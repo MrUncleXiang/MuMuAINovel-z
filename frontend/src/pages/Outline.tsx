@@ -235,8 +235,9 @@ export default function Outline() {
       eventBus.emit('background-task-created');
       void refreshOutlines();
     } catch (error) {
-      const apiError = error as ApiError;
-      message.error(apiError.response?.data?.detail || '创建批量生成任务失败');
+      // fetch 抛出的 Error 已带后端 detail（非 axios 结构），直接显示
+      const msg = error instanceof Error ? error.message : '创建批量生成任务失败';
+      message.error(msg);
     } finally {
       setVolumeGenBusy(false);
     }
