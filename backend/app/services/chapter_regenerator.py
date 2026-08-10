@@ -71,10 +71,24 @@ class ChapterRegenerator:
             logger.info(f"🎯 提示词构建完成，开始AI生成")
             yield {'type': 'progress', 'progress': 15, 'message': '开始AI生成内容...'}
             
-            # 3. 构建系统提示词（注入写作风格）
+            # 3. 构建系统提示词（Skill 优先 + 写作风格补充）
             system_prompt_with_style = None
+            # ⚡ Skill 支持：指定 skill_key 时注入 Skill 工作流
+            if regenerate_request.skill_key:
+                from app.services.skill_loader import build_skill_system_prompt
+                skill_prompt = build_skill_system_prompt(regenerate_request.skill_key)
+                if skill_prompt:
+                    system_prompt_with_style = skill_prompt
+                    logger.info(f"⚡ 已将 Skill '{regenerate_request.skill_key}' 注入系统提示词（重新生成）")
             if style_content:
-                system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
+                if system_prompt_with_style:
+                    system_prompt_with_style += f"""
+
+【🎨 写作风格要求 - 补充】
+
+{style_content}"""
+                else:
+                    system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
 
 {style_content}
 

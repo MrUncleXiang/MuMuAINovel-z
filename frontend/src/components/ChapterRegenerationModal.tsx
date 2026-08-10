@@ -22,6 +22,8 @@ import {
 } from '@ant-design/icons';
 import { ssePost } from '../utils/sseClient';
 import { SSEProgressModal } from './SSEProgressModal';
+import AIServiceSelector, { type AIServiceSelection } from './AIServiceSelector';
+import SkillSelector from './SkillSelector';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -63,6 +65,9 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
   const [wordCount, setWordCount] = useState(0);
   const [selectedSuggestions, setSelectedSuggestions] = useState<number[]>([]);
   const [modificationSource, setModificationSource] = useState<'custom' | 'analysis_suggestions' | 'mixed'>('custom');
+  // AI 服务/模型与 Skill 选择
+  const [aiSelection, setAISelection] = useState<AIServiceSelection | undefined>();
+  const [skillKey, setSkillKey] = useState<string | undefined>();
 
   useEffect(() => {
     if (visible) {
@@ -124,6 +129,9 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
         custom_instructions?: string;
         selected_suggestion_indices: number[];
         suggestions_text: string[];
+        provider_config_id?: string;
+        model?: string;
+        skill_key?: string;
         preserve_elements: {
           preserve_structure: boolean;
           preserve_dialogues: string[];
@@ -146,6 +154,9 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
           : selectedSuggestions
               .filter(idx => idx >= 0 && idx < suggestions.length)
               .map(idx => suggestions[idx].content),
+        provider_config_id: aiSelection?.provider_config_id,
+        model: aiSelection?.model,
+        skill_key: skillKey,
         preserve_elements: {
           preserve_structure: values.preserve_structure,
           preserve_dialogues: values.preserve_dialogues || [],
@@ -397,6 +408,14 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
             </Form.Item>
 
             <Divider />
+
+            {/* AI 服务与模型（与全局一致） */}
+            <AIServiceSelector usageType="chapter_write" value={aiSelection} onChange={setAISelection} />
+
+            {/* Skill */}
+            <Form.Item label="应用 Skill" tooltip="选择一个 Skill 工作流指导重写，不选则使用标准流程" style={{ marginBottom: 12 }}>
+              <SkillSelector value={skillKey} onChange={setSkillKey} />
+            </Form.Item>
 
             {/* 生成参数 */}
             <Form.Item

@@ -4114,8 +4114,22 @@ async def regenerate_chapter_stream(
                     data={'task_id': task_id}
                 )
                 
-                # 初始化重新生成器
-                regenerator = ChapterRegenerator(user_ai_service)
+                # 初始化重新生成器（支持指定 AI 服务/模型）
+                ai_service = user_ai_service
+                if regenerate_request.provider_config_id or regenerate_request.model:
+                    from app.services.ai_provider_service import create_routed_ai_service
+                    ai_service = await create_routed_ai_service(
+                        db_session,
+                        user_id=user_id,
+                        usage_type="chapter_write",
+                        provider_config_id=regenerate_request.provider_config_id,
+                        model=regenerate_request.model,
+                        project_id=chapter.project_id,
+                        chapter_id=chapter_id,
+                        task_trace_id=task_id,
+                        enable_mcp=False,
+                    )
+                regenerator = ChapterRegenerator(ai_service)
                 
                 # === 生成阶段 ===
                 full_content = ""
