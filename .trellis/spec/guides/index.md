@@ -25,6 +25,9 @@ These guides help you **ask the right questions before coding**.
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Pipeline Data Integrity Guide](./pipeline-data-integrity-guide.md) | Keep book/pipeline data complete; avoid half-built books | Creating projects, one-click book, test data, connecting pipeline to existing books |
 | [Skill Workflow Plan](./skill-workflow-plan.md) | SKILL 体系审查与流程修改方案（网文工坊引入、多技能、模板治理） | 技能体系相关改动前必读 |
+| [Async Task Tracking Guide](./async-task-tracking-guide.md) | 异步任务触发必跟踪、轮询覆盖全部终态、状态枚举同步 | 涉及分析/生成/展开/重写等异步任务的改动 |
+| [Frontend Modal Interaction Guide](./frontend-modal-interaction-guide.md) | modal.confirm 静态渲染陷阱与受控 Modal/子组件/Form 三方案 | 弹窗内交互、AI 辅助区块、loading/进度展示 |
+| [Backend Defensive Guide](./backend-defensive-guide.md) | 提交前 pyflakes 扫描、except 闭包、datetime 序列化、ORM session | 后端改动、合并同事分支、后台任务 |
 
 ---
 
