@@ -2883,6 +2883,74 @@ export default function Chapters() {
         footer={null}
       >
         <Form form={editorForm} layout="vertical" onFinish={handleEditorSubmit}>
+          {/* 📋 本章章纲（来自大纲展开，写作时对照查看） */}
+          {editingId && (() => {
+            const ch = chapters.find(c => c.id === editingId);
+            if (!ch?.expansion_plan) return null;
+            try {
+              const plan = JSON.parse(ch.expansion_plan) as ExpansionPlanData;
+              return (
+                <Collapse
+                  defaultActiveKey={['plan']}
+                  size="small"
+                  style={{ marginBottom: 12, background: token.colorFillQuaternary }}
+                  items={[{
+                    key: 'plan',
+                    label: (
+                      <Space wrap>
+                        <BookOutlined />
+                        <span style={{ fontWeight: 500 }}>本章章纲</span>
+                        {plan.estimated_words ? <Tag color="blue">预计 {plan.estimated_words} 字</Tag> : null}
+                        {plan.emotional_tone ? <Tag color="green">{plan.emotional_tone}</Tag> : null}
+                      </Space>
+                    ),
+                    children: (
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        {plan.narrative_goal && (
+                          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                            <strong>🎯 叙事目标：</strong>{plan.narrative_goal}
+                          </div>
+                        )}
+                        {plan.key_events && plan.key_events.length > 0 && (
+                          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                            <strong>🔑 关键事件：</strong>
+                            <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                              {plan.key_events.map((e, i) => <li key={i}>{e}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        {plan.character_focus && plan.character_focus.length > 0 && (
+                          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                            <strong>👤 涉及角色：</strong>
+                            {plan.character_focus.map((c, i) => <Tag key={i} style={{ marginLeft: 4 }}>{c}</Tag>)}
+                          </div>
+                        )}
+                        {plan.scenes && plan.scenes.length > 0 && (
+                          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                            <strong>📍 场景：</strong>
+                            {plan.scenes.map((s, i) => (
+                              <div key={i} style={{ marginLeft: 18, fontSize: 12.5, color: token.colorTextSecondary, lineHeight: 1.8 }}>
+                                {typeof s === 'string'
+                                  ? s
+                                  : `${s.location || ''}${s.characters && s.characters.length ? `（${s.characters.join('、')}）` : ''}${s.purpose ? `：${s.purpose}` : ''}`}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {plan.conflict_type && (
+                          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+                            <strong>⚔️ 冲突类型：</strong>{plan.conflict_type}
+                          </div>
+                        )}
+                      </Space>
+                    ),
+                  }]}
+                />
+              );
+            } catch {
+              return null;
+            }
+          })()}
           {/* 章节标题和AI创作按钮 */}
           <Form.Item
             label="章节标题"
