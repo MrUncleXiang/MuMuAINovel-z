@@ -48,6 +48,7 @@ from app.schemas.chapter import (
     AnalysisComparisonCreateRequest,
     BatchGenerateRequest,
     BatchGenerateResponse,
+    VolumeReviewRequest,
     BatchGenerateStatusResponse,
     ExpansionPlanUpdate,
     PartialRegenerateRequest
@@ -3245,6 +3246,176 @@ async def get_active_batch_generation(
             "started_at": task.started_at.isoformat() if task.started_at else None
         }
     }
+
+
+@router.post("/project/{project_id}/volume-review", summary="卷检查（后台任务，只出报告不改文）")
+async def volume_review(
+    project_id: str,
+    payload: VolumeReviewRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """对卷内每章执行正文审查 + 跨章逻辑检查，结果存入后台任务。"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    await verify_project_access(project_id, user_id, db)
+
+    outline_result = await db.execute(select(Outline).where(Outline.id == payload.outline_id))
+    outline = outline_result.scalar_one_or_none()
+    if not outline:
+        raise HTTPException(status_code=404, detail="大纲不存在")
+    if outline.project_id != project_id:
+        raise HTTPException(status_code=403, detail="大纲不属于该项目")
+
+    from app.services.background_task_service import background_task_service
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=project_id,
+        task_type="volume_review",
+        task_input={"outline_id": payload.outline_id},
+        db=db,
+    )
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_volume_review_bg
+    )
+    return {"task_id": task.id, "task_type": "volume_review", "status": "pending"}
+
+
+async def _run_volume_review_bg(task_id: str, bg_user_id: str):
+    """后台执行卷检查：逐章审查（apply_fix=False）+ 跨章 continuity 检查"""
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+    from app.services.background_task_service import TaskProgressTracker
+    from app.models.background_task import BackgroundTask
+
+    engine = await get_engine(bg_user_id)
+    AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+    async with AsyncSessionLocal() as db:
+        tracker = TaskProgressTracker(task_id, bg_user_id, "卷检查")
+        try:
+            await tracker.start()
+            bg = (await db.execute(select(BackgroundTask).where(BackgroundTask.id == task_id))).scalar_one_or_none()
+            if not bg:
+                await tracker.error("任务不存在")
+                return
+            outline_id = (bg.task_input or {}).get("outline_id")
+            if not outline_id:
+                await tracker.error("缺少卷参数")
+                return
+            outline = (await db.execute(select(Outline).where(Outline.id == outline_id))).scalar_one_or_none()
+            if not outline:
+                await tracker.error("大纲不存在")
+                return
+            project_id = outline.project_id
+
+            chapters = list((await db.scalars(
+                select(Chapter).where(Chapter.outline_id == outline_id).order_by(Chapter.chapter_number)
+            )).all())
+            if not chapters:
+                await tracker.error("该卷还没有展开的章节")
+                return
+
+            from app.services.ai_provider_service import create_routed_ai_service
+            ai_service = await create_routed_ai_service(
+                db, user_id=bg_user_id, usage_type="chapter_write",
+                project_id=project_id, enable_mcp=False,
+            )
+
+            from app.services.chapter_review_service import review_and_fix
+            chapter_reports = []
+            total = len(chapters)
+            for i, ch in enumerate(chapters):
+                await tracker.loading(f"审查第{ch.chapter_number}章（{i + 1}/{total}）...", 0.1 + 0.8 * i / max(total, 1))
+                try:
+                    r = await review_and_fix(
+                        db, chapter=ch, user_id=bg_user_id, ai_service=ai_service,
+                        max_rounds=2, enabled=True, apply_fix=False,
+                    )
+                    chapter_reports.append({
+                        "chapter_id": str(ch.id),
+                        "chapter_number": ch.chapter_number,
+                        "title": ch.title,
+                        "problems": r.problems,
+                        "major": r.major,
+                        "rounds": r.rounds,
+                        "errors": r.step_errors,
+                    })
+                except Exception as e:
+                    logger.warning(f"⚠️ 卷检查第{ch.chapter_number}章失败: {e}")
+                    chapter_reports.append({
+                        "chapter_id": str(ch.id),
+                        "chapter_number": ch.chapter_number,
+                        "title": ch.title,
+                        "problems": [],
+                        "major": False,
+                        "errors": [str(e)],
+                    })
+
+            # 跨章 continuity 检查（各章摘要 + 项目档案）
+            volume_issues = []
+            try:
+                await tracker.loading("跨章逻辑检查（continuity）...", 0.95)
+                volume_issues = await _check_volume_continuity(
+                    db, project_id=project_id, chapters=chapters, user_id=bg_user_id, ai_service=ai_service,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ 跨章逻辑检查失败: {e}")
+
+            result = {
+                "outline_id": outline_id,
+                "outline_title": outline.title,
+                "chapters": chapter_reports,
+                "volume_issues": volume_issues,
+            }
+            bg.task_result = result
+            await db.commit()
+            await tracker.complete(f"卷检查完成：{total} 章，共 {sum(len(c['problems']) for c in chapter_reports)} 个问题")
+            logger.info(f"✅ 卷检查完成: {outline.title}, {total} 章")
+        except Exception as e:
+            logger.error(f"❌ 卷检查失败: {e}")
+            await tracker.error(str(e))
+
+
+async def _check_volume_continuity(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    chapters: list,
+    user_id: str,
+    ai_service,
+) -> list:
+    """跨章逻辑检查：注入 continuity SKILL，输入各章摘要 + 角色档案，输出跨章问题列表"""
+    from app.services.skill_loader import build_skill_system_prompt
+    from app.models.character import Character
+    from app.models.memory import PlotAnalysis, StoryMemory
+
+    characters = list((await db.scalars(select(Character).where(Character.project_id == project_id))).all())
+    chars_info = "\n".join(f"- {c.name}: {(c.background or '')[:120]}" for c in characters) or "（无角色档案）"
+
+    summaries = []
+    for ch in chapters:
+        summaries.append(f"第{ch.chapter_number}章《{ch.title}》：{(ch.content or '')[:400]}")
+    chapters_text = "\n\n".join(summaries)
+
+    prompt = (
+        f"【任务】对以下一卷（{len(chapters)} 章）的正文做跨章逻辑检查。\n"
+        "重点核查：时间线是否矛盾、人物行为是否合理、资源/伤势/身份/战力是否前后一致、"
+        "伏笔是否埋下未回收、情绪与关系变化是否跳变。\n"
+        "输出 JSON（不要输出其他文字）：\n"
+        "{\"problems\": [{\"type\": \"逻辑连贯\", \"description\": \"问题描述（引用涉及章号）\", "
+        "\"suggestion\": \"修改建议\", \"level\": \"minor|major\"}]}\n"
+        "无问题输出 {\"problems\": []}。\n\n"
+        f"【角色档案】\n{chars_info}\n\n"
+        f"【本卷各章正文（截取）】\n{chapters_text}"
+    )
+    system_prompt = build_skill_system_prompt("SKILL_CONTINUITY")
+    from app.services.chapter_review_service import _parse_problems
+    raw = await ai_service.generate_text(prompt=prompt, system_prompt=system_prompt, temperature=0.3, auto_mcp=False)
+    problems = _parse_problems(str(raw.get("content") or ""))
+    for p in problems:
+        p["step"] = "continuity"
+    return problems
 
 
 @router.post("/batch-generate/{batch_id}/cancel", summary="取消批量生成任务")

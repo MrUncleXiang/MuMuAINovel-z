@@ -125,13 +125,15 @@ async def review_and_fix(
     ai_service,
     max_rounds: int = 2,
     enabled: bool = True,
+    apply_fix: bool = True,
 ) -> ReviewReport:
     """对章节正文执行审查流水线，返回报告（含最终正文）。
 
     - enabled=False：跳过审查，返回原正文
+    - apply_fix=False：只审查不改文（卷检查用），final_content 保持原正文
     - 每轮：3 步审查 → 合并问题
-      - 有 major → 打回重写（带 major 清单）→ 下一轮
-      - 仅 minor → 原地最小修改 → 返回
+      - 有 major → 打回重写（带 major 清单）→ 下一轮（apply_fix 时）
+      - 仅 minor → 原地最小修改（apply_fix 时）→ 返回
     """
     report = ReviewReport(chapter_id=str(chapter.id), final_content=chapter.content or "")
     if not enabled or not (chapter.content or "").strip():
@@ -171,6 +173,12 @@ async def review_and_fix(
             logger.info(f"✅ 审查通过（第{round_no}轮）：无问题")
             report.final_content = content
             report.major = False
+            return report
+
+        if not apply_fix:
+            # 只审查不改（卷检查）：保留问题列表，不修改正文
+            report.final_content = content
+            report.major = bool(major_problems)
             return report
 
         # 打回重写（major）

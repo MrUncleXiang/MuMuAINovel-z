@@ -185,6 +185,11 @@ class AnalysisComparisonCreateRequest(BaseModel):
         return self
 
 
+class VolumeReviewRequest(BaseModel):
+    """卷检查请求：对卷内每章做正文审查 + 跨章逻辑检查（只出报告不改文）"""
+    outline_id: str = Field(..., description="卷（大纲）ID")
+
+
 class BatchGenerateRequest(BaseModel):
     """批量生成章节的请求模型"""
     start_chapter_number: int = Field(..., description="起始章节序号")
