@@ -3803,15 +3803,24 @@ async def execute_batch_generation_in_order(
                     except Exception as review_err:
                         logger.warning(f"⚠️ 章节审查失败（不阻断生成）: {review_err}")
 
-                    # 分析复用生成所选的服务/模型（避免默认路由 flash 截断导致 JSON 解析失败）
+                    # 分析使用 chapter_analysis 路由（默认 pro，稳定输出大 JSON；
+                    # 批量生成所选模型常用于创作，分析这类复杂结构化输出需稳定模型）
+                    try:
+                        from app.services.ai_provider_service import create_routed_ai_service
+                        analysis_ai_service = await create_routed_ai_service(
+                            db_session, user_id=user_id, usage_type="chapter_analysis",
+                            project_id=task.project_id, enable_mcp=False,
+                        )
+                    except Exception:
+                        analysis_ai_service = ai_service
                     analysis_result = await analyze_chapter_background(
                         chapter_id=chapter_id,
                         user_id=user_id,
                         project_id=task.project_id,
                         task_id=analysis_task.id,
-                        ai_service=ai_service,
-                        model=custom_model,
-                        enable_mcp=enable_mcp,
+                        ai_service=analysis_ai_service,
+                        model=None,
+                        enable_mcp=False,
                     )
 
                     if not analysis_result:
