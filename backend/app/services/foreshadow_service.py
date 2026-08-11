@@ -1311,7 +1311,7 @@ class ForeshadowService:
                                 existing = None
                                 logger.warning(f"⚠️ 伏笔ID不存在或不属于该项目，跳过本次回收同步: {reference_id}")
                                 stats["skipped_resolve_count"] = stats.get("skipped_resolve_count", 0) + 1
-                                stats["errors"].append(f"reference_foreshadow_id 无效或已删除: {reference_id}")
+                                # 设计内的跳过（防止旧分析结果污染已删除伏笔）：不计入 errors，避免整个分析失败
                                 continue
                         
                         # 策略2: 内容匹配备用机制（仅在 analysis 未提供 reference_id 时启用）

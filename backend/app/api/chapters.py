@@ -875,8 +875,10 @@ async def _analyze_chapter_background_impl(
         )
         
         # 定义重试回调函数，用于在重试时更新任务状态
+        last_fail_reason = {"msg": ""}
         async def on_retry_callback(attempt: int, max_retries: int, wait_time: int, error_reason: str):
             """重试时更新任务状态，让前端能感知到重试进度"""
+            last_fail_reason["msg"] = error_reason
             try:
                 async with write_lock:
                     # 重新获取任务（确保获取最新状态）
@@ -912,10 +914,14 @@ async def _analyze_chapter_background_impl(
         if not analysis_result:
             async with write_lock:
                 task.status = 'failed'
-                task.error_message = 'AI分析失败，请检查日志'
+                reason = last_fail_reason.get("msg", "")
+                task.error_message = (
+                    f"AI分析失败：{reason[:120]}"
+                    if reason else "AI分析失败（多次尝试均未得到有效结果）"
+                ) + "。可关闭后重新分析，或在弹窗中选择更强模型（如 deepseek-v4-pro）。"
                 task.completed_at = datetime.now()
                 await db_session.commit()
-            logger.error(f"❌ AI分析失败: {chapter_id}")
+            logger.error(f"❌ AI分析失败: {chapter_id}，原因: {reason}")
             return False
 
         # LLM 调用期间用户可能编辑正文；过期结果绝不能写入正式状态。
