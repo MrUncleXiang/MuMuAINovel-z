@@ -3538,6 +3538,38 @@ async def execute_batch_generation_in_order(
                         return
                     logger.info(f"🔍 开始正式分析章节: 第{chapter.chapter_number}章")
 
+                    # ⚡ 正文审查（生成后、分析前）：3 步流水线 + 原地修改/打回重写
+                    try:
+                        from app.services.chapter_review_service import review_and_fix
+                        from app.services.chapter_lifecycle_service import chapter_content_hash as _cc_hash
+                        review_report = await review_and_fix(
+                            db_session,
+                            chapter=chapter,
+                            user_id=user_id,
+                            ai_service=ai_service,
+                            max_rounds=2,
+                            enabled=True,
+                        )
+                        if review_report.final_content and review_report.final_content != chapter.content:
+                            # 审查修改了正文：该章刚生成、尚未分析，直接覆盖安全；同步 content_hash
+                            chapter.content = review_report.final_content
+                            chapter.word_count = len(review_report.final_content)
+                            try:
+                                analysis_task.content_hash = _cc_hash(chapter.content)
+                            except Exception:
+                                pass
+                            await db_session.commit()
+                            logger.info(f"🔍 审查修改已应用：第{chapter.chapter_number}章，{len(review_report.problems)} 个问题"
+                                        f"（major={review_report.major}，{review_report.rounds} 轮，类型：{[p['type'] for p in review_report.problems[:5]]}）")
+                        elif review_report.problems:
+                            logger.info(f"🔍 审查完成：第{chapter.chapter_number}章 {len(review_report.problems)} 个问题（未修改）")
+                        else:
+                            logger.info(f"🔍 审查通过：第{chapter.chapter_number}章无问题")
+                        if review_report.step_errors:
+                            logger.warning(f"⚠️ 审查部分步骤失败（不阻断）: {review_report.step_errors}")
+                    except Exception as review_err:
+                        logger.warning(f"⚠️ 章节审查失败（不阻断生成）: {review_err}")
+
                     # 分析复用生成所选的服务/模型（避免默认路由 flash 截断导致 JSON 解析失败）
                     analysis_result = await analyze_chapter_background(
                         chapter_id=chapter_id,
