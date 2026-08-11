@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, Checkbox, theme } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, Checkbox, theme, Tabs } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
@@ -60,6 +60,7 @@ export default function Chapters() {
   const { token } = theme.useToken();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorActiveTab, setEditorActiveTab] = useState('edit');
   const [isContinuing, setIsContinuing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1064,6 +1065,8 @@ export default function Chapters() {
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
+        // 流式生成开始 → 切回正文编辑 Tab 看着写入
+        setEditorActiveTab('edit');
         instance.update({
           okButtonProps: { danger: true, loading: true },
           cancelButtonProps: { disabled: true },
@@ -1114,7 +1117,7 @@ export default function Chapters() {
       message.error("请先选择写作风格");
       return;
     }
-
+    setEditorActiveTab('edit');
     try {
       await generateChapterBackground(
         editingId,
@@ -2915,7 +2918,7 @@ export default function Chapters() {
         closable={!isGenerating}
         maskClosable={false}
         keyboard={!isGenerating}
-        width={isMobile ? 'calc(100vw - 32px)' : '85%'}
+        width={isMobile ? 'calc(100vw - 32px)' : '94%'}
         centered
         style={isMobile ? {
           maxWidth: 'calc(100vw - 32px)',
@@ -2924,14 +2927,48 @@ export default function Chapters() {
         } : undefined}
         styles={{
           body: {
-            maxHeight: isMobile ? 'calc(100vh - 200px)' : 'calc(100vh - 110px)',
+            maxHeight: isMobile ? 'calc(100vh - 200px)' : 'calc(100vh - 140px)',
             overflowY: 'auto',
-            padding: isMobile ? '16px 12px' : '8px'
+            padding: isMobile ? '16px 12px' : '8px 16px'
           }
         }}
-        footer={null}
+        footer={
+          <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <Button
+              onClick={() => {
+                if (isGenerating) {
+                  message.warning('AI正在创作中，请等待完成后再关闭');
+                  return;
+                }
+                setIsEditorOpen(false);
+              }}
+              disabled={isGenerating}
+            >
+              取消
+            </Button>
+            <Button
+              type="primary"
+              htmlType="submit"
+              disabled={isGenerating}
+              onClick={() => editorForm.submit()}
+            >
+              保存章节
+            </Button>
+          </Space>
+        }
       >
         <Form form={editorForm} layout="vertical" onFinish={handleEditorSubmit}>
+          <Tabs
+            activeKey={editorActiveTab}
+            onChange={setEditorActiveTab}
+            size="small"
+            items={[
+              {
+                key: 'edit',
+                label: '📝 正文编辑',
+                forceRender: true,
+                children: (
+                  <>
           {/* 📋 本章章纲（来自大纲展开，写作时对照查看） */}
           {editingId && (() => {
             const ch = chapters.find(c => c.id === editingId);
@@ -3044,7 +3081,33 @@ export default function Chapters() {
             </Space.Compact>
           </Form.Item>
 
+          <Form.Item label="章节内容" name="content">
+            <TextArea
+              ref={contentTextAreaRef}
+              rows={isMobile ? 12 : 20}
+              placeholder="开始写作..."
+              style={{ fontFamily: 'monospace', fontSize: isMobile ? 12 : 14 }}
+              disabled={isGenerating}
+            />
+          </Form.Item>
 
+          {/* 局部重写浮动工具栏（跟随正文编辑区） */}
+          <div data-partial-regenerate-toolbar>
+            <PartialRegenerateToolbar
+              visible={partialRegenerateToolbarVisible && !isGenerating}
+              position={partialRegenerateToolbarPosition}
+              selectedText={selectedTextForRegenerate}
+              onRegenerate={handleOpenPartialRegenerate}
+            />
+          </div>
+
+          </>)}
+          , {
+            key: 'gen',
+            label: '⚡ AI 生成',
+            forceRender: true,
+            children: (
+              <>
           {/* 第一行：写作风格 + 叙事角度 */}
           <div style={{
             display: isMobile ? 'block' : 'flex',
@@ -3222,16 +3285,13 @@ export default function Chapters() {
             )}
           </div>
 
-          <Form.Item label="章节内容" name="content">
-            <TextArea
-              ref={contentTextAreaRef}
-              rows={isMobile ? 12 : 20}
-              placeholder="开始写作..."
-              style={{ fontFamily: 'monospace', fontSize: isMobile ? 12 : 14 }}
-              disabled={isGenerating}
-            />
-          </Form.Item>
-
+          </>)}
+          , {
+            key: 'ai-edit',
+            label: '🤖 AI 修改',
+            forceRender: true,
+            children: (
+              <>
           {/* 🤖 AI 对话式修改（指令驱动最小修改 → diff 确认） */}
           {editingId && (
             <ChapterAIChatEdit
@@ -3247,6 +3307,13 @@ export default function Chapters() {
             />
           )}
 
+          </>)}
+          , {
+            key: 'compare',
+            label: '🔀 多模型比较',
+            forceRender: true,
+            children: (
+              <>
           {generationMode === 'compare' && (
             <Card size="small" style={{ marginBottom: 16 }}>
               <Space wrap>
@@ -3271,45 +3338,11 @@ export default function Chapters() {
             </Card>
           )}
 
-          {/* 局部重写浮动工具栏 */}
-          <div data-partial-regenerate-toolbar>
-            <PartialRegenerateToolbar
-              visible={partialRegenerateToolbarVisible && !isGenerating}
-              position={partialRegenerateToolbarPosition}
-              selectedText={selectedTextForRegenerate}
-              onRegenerate={handleOpenPartialRegenerate}
-            />
-          </div>
-
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
-              <Space style={{ width: isMobile ? '100%' : 'auto' }}>
-                <Button
-                  onClick={() => {
-                    if (isGenerating) {
-                      message.warning('AI正在创作中，请等待完成后再关闭');
-                      return;
-                    }
-                    setIsEditorOpen(false);
-                  }}
-                  block={isMobile}
-                  disabled={isGenerating}
-                >
-                  取消
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  block={isMobile}
-                  disabled={isGenerating}
-                >
-                  保存章节
-                </Button>
-              </Space>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
+          </>)}
+          , ]}>
+        </Tabs>
+      </Form>
+    </Modal>
 
       {analysisChapterId && (
         <ChapterAnalysis
