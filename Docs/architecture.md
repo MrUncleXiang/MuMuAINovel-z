@@ -35,7 +35,7 @@ MuMuAINovel 是 AI 辅助中文网文创作平台。核心是一条"AI 自动创
 |---|---|
 | `api/` | FastAPI 路由：projects / outlines / chapters / characters / foreshadows / careers / prompts / skills / tasks 等 |
 | `services/ai_provider_service.py` | 模型路由：`ai_usage_routes` 按 usage_type 选 provider+model；`create_routed_ai_service` 统一入口 |
-| `services/ai_clients/` | HTTP 客户端（OpenAI 兼容 / Anthropic / Gemini）；**必须带浏览器 UA**（见 [spec](.trellis/spec/backend/ai-provider-integration.md)） |
+| `services/ai_clients/` | HTTP 客户端（OpenAI 兼容 / Anthropic / Gemini）；**必须带浏览器 UA**（见 [spec](../.trellis/spec/backend/ai-provider-integration.md)） |
 | `services/chapter_review_service.py` | 正文审查引擎：3 步流水线（错别字 → 表达/AI味 → 剧情），minor 原地修 / major 打回重写 |
 | `services/chapter_analysis_materialization_service.py` | 分析物化：记忆入库、角色/职业/组织状态更新、伏笔同步（**同正文 hash 只物化一次**） |
 | `services/memory_service.py` | 向量记忆：按章切片存取（Chroma），供章节生成上下文检索 |
@@ -60,7 +60,7 @@ MuMuAINovel 是 AI 辅助中文网文创作平台。核心是一条"AI 自动创
 3. **内容变更必须有 hash 校验**：分析任务绑定生成时的 `content_hash`；正文被编辑后过期结果一律丢弃（`analysis_task_matches_content`），禁止写入正式状态。
 4. **状态派生顺序敏感**：展开 → 生成 → **审查（改定稿）** → 分析（基于定稿）→ 后续章。审查必须先于分析（分析基于最终正文）。
 5. **正文审查的产物**：minor 原地最小修改、major 带问题清单打回重写；每章轮数上限（默认 2），超限停下等人工，不无限循环烧 token。
-6. **AI 请求必须带浏览器 UA**（上游 Cloudflare 按 UA 指纹拦截：空响应/截断/无效 JSON/524 都是 WAF 症状，先查传输层再归咎模型）。见 [ai-provider-integration.md](.trellis/spec/backend/ai-provider-integration.md)。
+6. **AI 请求必须带浏览器 UA**（上游 Cloudflare 按 UA 指纹拦截：空响应/截断/无效 JSON/524 都是 WAF 症状，先查传输层再归咎模型）。见 [ai-provider-integration.md](../.trellis/spec/backend/ai-provider-integration.md)。
 7. **设计内跳过不得使整任务失败**（如伏笔同步引用已删除伏笔 → 跳过并记录，不 abort 分析）。
 8. **不要直接改数据库**：结构变更走 alembic 迁移；配置类（如 `ai_usage_routes` 模型路由）优先走设置 UI，直接改库可能被 UI 覆盖。
 9. **前端复用既有模式**：AI 修改一律"流式生成 → diff 确认 → 应用"，不做黑盒覆盖。
