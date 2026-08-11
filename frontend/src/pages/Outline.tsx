@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo, useRef } from 'react';
 import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, Segmented, Alert, Row, Col, Divider, Checkbox, theme } from 'antd';
 import type { FormInstance } from 'antd';
-import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { getProjectTasks, getTaskStatus, type TaskStatus } from '../services/backgroundTaskService';
@@ -16,6 +16,7 @@ import { useThemeMode } from '../theme/useThemeMode';
 import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
+import VolumeReviewModal from '../components/VolumeReviewModal';
 
 // 大纲生成请求数据类型
 interface OutlineGenerateRequestData {
@@ -156,6 +157,10 @@ export default function Outline() {
   const [volumeGenSkip, setVolumeGenSkip] = useState(false);
   const [volumeGenBusy, setVolumeGenBusy] = useState(false);
   const [volumeGenPending, setVolumeGenPending] = useState<Array<{ chapter_number: number; title: string }>>([]);
+  // ── 卷检查（卷卡片入口 → 每章问题 Tab）──
+  const [volumeReview, setVolumeReview] = useState<{ open: boolean; outlineId: string; title: string }>({
+    open: false, outlineId: '', title: '',
+  });
 
   // 打开卷内生成：识别本卷未生成章节（getOutlineChapters 无 content 字段，按 status/word_count 判定）
   const handleVolumeGenerate = async (outline: Outline) => {
@@ -2414,6 +2419,13 @@ export default function Outline() {
                             </Button>
                           )}
                           <Button
+                            icon={<SearchOutlined />}
+                            onClick={() => setVolumeReview({ open: true, outlineId: item.id, title: item.title })}
+                            size={isMobile ? 'middle' : 'small'}
+                          >
+                            🔍 卷检查
+                          </Button>
+                          <Button
                             icon={<EditOutlined />}
                             onClick={() => handleOpenEditModal(item.id)}
                             size={isMobile ? 'middle' : 'small'}
@@ -2557,7 +2569,8 @@ export default function Outline() {
                     <Tag key={ch.chapter_number} style={{ margin: 2 }}>第{ch.chapter_number}章</Tag>
                   ))}
                   <div style={{ marginTop: 6, fontSize: 12, color: token.colorTextSecondary }}>
-                    预计耗时 ≈ {volumeGenPending.length * 5} 分钟（每章生成+分析约 5 分钟）；需保证"前一章写完并分析过"，否则会提示或中断
+                    预计耗时 ≈ {volumeGenPending.length * 5} 分钟（每章生成+分析约 5 分钟）；
+                    若上一章分析失败/未完成，系统会自动重新分析后再继续（无需手动处理）
                   </div>
                 </div>
               }
@@ -2763,6 +2776,14 @@ export default function Outline() {
           <DraftOutlineAISection form={manualCreateForm} projectId={currentProject.id} onRunningChange={setDraftAIRunning} />
         </Form>
       </Modal>
+
+      <VolumeReviewModal
+        open={volumeReview.open}
+        onClose={() => setVolumeReview(v => ({ ...v, open: false }))}
+        projectId={currentProject?.id || ''}
+        outlineId={volumeReview.outlineId}
+        outlineTitle={volumeReview.title}
+      />
     </>
   );
 }
