@@ -1,0 +1,30 @@
+# MuMuAINovel
+
+AI 辅助中文网文创作平台：从大纲到正文的"AI 自动创作管线"（大纲/世界观构建 → 章节展开 → 正文生成 → 正文审查 → 章节分析 → 记忆/角色/伏笔状态同步），并配套人物、关系、组织、职业、伏笔管理等创作管理工具与 AI 工具箱（Skill 系统、提示词工坊、多模型对比）。
+
+## 核心规范（真相源）
+
+- [项目说明与沟通约定](AGENTS.md)
+- [架构真相源：技术栈 / 模块地图 / 架构红线](Docs/architecture.md)
+- [架构决策记录（ADR）](Docs/adr/README.md)
+- [单上下文总览](CONTEXT.md)
+- Trellis 工作流（任务治理）：[workflow](.trellis/workflow.md) · [spec 编码规范](.trellis/spec/backend/index.md)（后端）/ [frontend](.trellis/spec/frontend/index.md) / [guides](.trellis/spec/guides/index.md)
+- [Agent 协作文档](docs/agents/domain.md)
+
+## 目录速览
+
+| 路径 | 职责 |
+|---|---|
+| `backend/app/` | FastAPI 后端（api 路由 / services 业务逻辑 / models 数据模型 / schemas 校验 / skills 正文 SKILL） |
+| `backend/app/services/` | 核心服务：ai_provider（模型路由）、chapter_*（生成/审查/分析/物化）、memory（向量记忆）、background_task（任务队列）、foreshadow/career/character_state（状态同步） |
+| `frontend/src/pages/` | 页面：大纲管理、章节管理、剧情分析、伏笔管理、角色/关系/组织/职业、本书审查配置、流水线等 |
+| `frontend/src/components/` | 通用组件：AI 修改（diff 确认）、卷检查、审查报告、多模型对比等 |
+| `.trellis/` | Trellis 任务治理 + spec 规范 |
+| `docs/` | Agent 协作文档 |
+
+## 构建与运行
+
+- 后端：`docker compose up -d`（容器 `mumuainovel`，含 alembic 迁移自动执行）；迁移手动：`alembic upgrade head`
+- 前端构建：`cd frontend && npm run build`（内存受限时 `NODE_OPTIONS=--max-old-space-size=4096`）；产物输出到 `backend/static/`（部署：`docker cp backend/static/. mumuainovel:/app/static/`）
+- 数据库：PostgreSQL（容器 `mumuainovel-postgres`）
+- 提交前检查（pre-commit hook 自动）：pyflakes 未定义名称 / 全量 Python 语法 / 前端 TS 类型

@@ -72,3 +72,41 @@ wayfinder 地图走完后：
 ### Domain docs
 
 单上下文布局：仓库根目录一个 `CONTEXT.md` + `docs/adr/`。参见 `docs/agents/domain.md`。
+
+---
+
+# 项目速览（真相源入口）
+
+MuMuAINovel：AI 辅助中文网文创作平台（大纲→展开→生成→审查→分析的状态化创作管线）。
+
+## 目录速览
+
+| 路径 | 职责 |
+|---|---|
+| `backend/app/api/` | FastAPI 路由（projects/outlines/chapters/foreshadows/tasks 等） |
+| `backend/app/services/` | 核心业务：ai_provider 路由、chapter_review（审查）、chapter_analysis_materialization（分析物化）、memory（向量记忆）、background_task（任务队列） |
+| `backend/app/models/` | SQLAlchemy 模型（42 张表） |
+| `backend/app/skills/` | 正文写作/审稿 SKILL 包（proofread/aidetect/human/review/continuity 等） |
+| `frontend/src/pages/` | 页面（大纲/章节/剧情分析/伏笔/审查配置/流水线等） |
+| `frontend/src/components/` | 组件（AI 修改 diff、卷检查弹窗、审查报告弹窗、多模型对比） |
+| `Docs/` | 架构真相源（architecture.md + adr/） |
+| `.trellis/` | 任务治理 + spec 规范 |
+
+## 构建 / 测试 / 检查入口
+
+- 后端启动：`docker compose up -d`（容器 mumuainovel；alembic 迁移自动执行）
+- 数据库迁移：`alembic upgrade head`（backend/ 下，postgres 迁移在 `alembic/postgres/versions/`）
+- 前端构建：`cd frontend && npm run build`（产物 `backend/static/`；内存不足时 `NODE_OPTIONS=--max-old-space-size=4096`）
+- 前端部署：`docker cp backend/static/. mumuainovel:/app/static/ && docker restart mumuainovel`
+- 后端代码更新部署：`docker cp backend/app mumuainovel:/app/ && docker restart mumuainovel`
+- 提交前检查（pre-commit 自动）：pyflakes 未定义名称 / Python 语法 / 前端 TS 类型
+
+## 架构红线（详见 Docs/architecture.md）
+
+1. 生成/分析必须在后台任务执行（返回 task_id，前端轮询），禁止请求内同步调 AI。
+2. 后台任务函数签名 `(task_id, user_id)`，session/ai_service/tracker 内部自建。
+3. 正文变更走 content_hash 校验，过期分析结果一律丢弃。
+4. 顺序：展开→生成→审查（定稿）→分析→后续章；审查必须先于分析。
+5. AI 请求必须带浏览器 UA（Cloudflare 按 UA 指纹拦截，见 .trellis/spec/backend/ai-provider-integration.md）。
+6. 不要直接改数据库；结构变更走 alembic，配置走设置 UI。
+7. AI 修改一律"流式生成 → diff 确认 → 应用"。
