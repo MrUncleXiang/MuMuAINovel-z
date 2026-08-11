@@ -111,26 +111,22 @@ class PlotAnalyzer:
         logger.debug(f"章节分析提示词完成: chapter_number={chapter_number}, prompt_length={len(prompt)}")
         for attempt in range(1, max_retries + 1):
             try:
-                # 调用AI进行分析
+                # 调用AI进行分析（非流式：分析是后台任务无需流式展示；
+                # 且长流式连接易被上游传输层掐断——实测 100s 左右流被截断只收到部分内容）
                 logger.info(f"  📡 调用AI分析(内容长度: {len(analysis_content)}字, 尝试 {attempt}/{max_retries})...")
                 accumulated_text = ""
-                
+
                 try:
-                    async for chunk in self.ai_service.generate_text_stream(
+                    result = await self.ai_service.generate_text(
                         prompt=prompt,
-                        temperature=0.3  # 降低温度以获得更稳定的JSON输出
-                    ):
-                        accumulated_text += chunk
+                        temperature=0.3,  # 降低温度以获得更稳定的JSON输出
+                        auto_mcp=False,
+                    )
+                    accumulated_text = str(result.get("content") or "").strip()
                 except asyncio.CancelledError:
                     raise
-                except GeneratorExit:
-                    # 流式响应被中断
-                    logger.warning(f"⚠️ 流式响应被中断(GeneratorExit)，已累积 {len(accumulated_text)} 字符")
-                    # 如果已经累积了足够内容，继续尝试解析
-                    if len(accumulated_text) < 100:
-                        raise Exception("流式响应中断，内容不足")
                 except Exception as stream_error:
-                    logger.error(f"❌ 流式生成出错: {str(stream_error)}")
+                    logger.error(f"❌ AI分析调用出错: {str(stream_error)}")
                     raise
                 
                 # 检查响应是否为空
