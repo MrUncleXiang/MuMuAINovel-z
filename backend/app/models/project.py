@@ -33,6 +33,9 @@ class Project(Base):
     narrative_perspective = Column(String(50), comment="叙事视角：first_person/third_person/omniscient")
     character_count = Column(Integer, default=5, comment="角色数量")
 
+    # 审查配置（JSON：{enabled, steps, max_rounds}）
+    review_config = Column(Text, comment="正文审查配置(JSON)")
+
     # 封面字段
     cover_image_url = Column(String(1000), comment="封面图片访问地址")
     cover_prompt = Column(Text, comment="最近一次生成封面使用的提示词")

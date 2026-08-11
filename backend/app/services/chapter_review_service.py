@@ -126,12 +126,14 @@ async def review_and_fix(
     max_rounds: int = 2,
     enabled: bool = True,
     apply_fix: bool = True,
+    steps: int = 3,
 ) -> ReviewReport:
     """对章节正文执行审查流水线，返回报告（含最终正文）。
 
     - enabled=False：跳过审查，返回原正文
     - apply_fix=False：只审查不改文（卷检查用），final_content 保持原正文
-    - 每轮：3 步审查 → 合并问题
+    - steps：流水线步数 1=错别字 2=+表达/AI味 3=+剧情
+    - 每轮：N 步审查 → 合并问题
       - 有 major → 打回重写（带 major 清单）→ 下一轮（apply_fix 时）
       - 仅 minor → 原地最小修改（apply_fix 时）→ 返回
     """
@@ -140,10 +142,11 @@ async def review_and_fix(
         return report
 
     content = chapter.content
+    step_list = REVIEW_STEPS[: max(1, min(3, steps))]
     for round_no in range(1, max_rounds + 1):
         report.rounds = round_no
         all_problems: List[Dict] = []
-        for step in REVIEW_STEPS:
+        for step in step_list:
             try:
                 system_prompt = build_skill_system_prompt(step["skill_key"])
                 raw = await _ai_text(ai_service, _build_review_prompt(content, step), system_prompt)

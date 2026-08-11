@@ -22,6 +22,7 @@ from app.models.batch_generation_task import BatchGenerationTask
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
+    ReviewConfigRequest,
     ProjectResponse,
     ProjectListResponse
 )
@@ -39,6 +40,7 @@ from app.schemas.import_export import (
 )
 from app.services.import_export_service import ImportExportService
 from app.services.memory_service import memory_service
+from app.services.review_config_service import review_config_defaults
 from app.services.project_creation_config_service import (
     freeze_project_creation_config,
     get_project_creation_config,
@@ -338,6 +340,48 @@ async def update_project(
     except Exception as e:
         logger.error(f"更新项目失败: {str(e)}", exc_info=True)
         raise
+
+
+@router.get("/{project_id}/review-config", summary="获取本书审查配置")
+async def get_review_config(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return {
+        "project_id": project_id,
+        "config": review_config_defaults(project.review_config),
+    }
+
+
+@router.put("/{project_id}/review-config", summary="保存本书审查配置")
+async def save_review_config(
+    project_id: str,
+    payload: ReviewConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    project.review_config = json.dumps(payload.config, ensure_ascii=False)
+    await db.commit()
+    return {"project_id": project_id, "config": review_config_defaults(project.review_config)}
 
 
 @router.delete("/{project_id}", summary="删除项目")

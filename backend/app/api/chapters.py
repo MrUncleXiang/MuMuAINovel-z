@@ -3713,13 +3713,20 @@ async def execute_batch_generation_in_order(
                     try:
                         from app.services.chapter_review_service import review_and_fix
                         from app.services.chapter_lifecycle_service import chapter_content_hash as _cc_hash
+                        from app.services.review_config_service import review_config_defaults
+                        from app.models.project import Project as _ProjectModel
+                        _prow = (await db_session.execute(
+                            select(_ProjectModel).where(_ProjectModel.id == task.project_id)
+                        )).scalar_one_or_none()
+                        _rcfg = review_config_defaults(_prow.review_config if _prow else None)
                         review_report = await review_and_fix(
                             db_session,
                             chapter=chapter,
                             user_id=user_id,
                             ai_service=ai_service,
-                            max_rounds=2,
-                            enabled=True,
+                            max_rounds=_rcfg["max_rounds"],
+                            enabled=_rcfg["enabled"],
+                            steps=_rcfg["steps"],
                         )
                         if review_report.final_content and review_report.final_content != chapter.content:
                             # 审查修改了正文：该章刚生成、尚未分析，直接覆盖安全；同步 content_hash

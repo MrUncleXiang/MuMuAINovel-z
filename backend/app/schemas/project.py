@@ -22,6 +22,11 @@ class ProjectCreate(ProjectBase):
     pass
 
 
+class ReviewConfigRequest(BaseModel):
+    """本书审查配置"""
+    config: dict = Field(default_factory=dict)
+
+
 class ProjectUpdate(BaseModel):
     """更新项目的请求模型"""
     title: Optional[str] = None
@@ -61,6 +66,7 @@ class ProjectResponse(ProjectBase):
     cover_error: Optional[str] = None
     cover_updated_at: Optional[datetime] = None
     outline_mode: str  # 显式声明以确保响应中包含
+    review_config: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
