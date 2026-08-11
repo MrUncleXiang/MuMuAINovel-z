@@ -1,54 +1,23 @@
 # Directory Structure
 
-> How frontend code is organized in this project.
+> Frontend organization (`frontend/src/`).
 
----
+## Layout
 
-## Overview
+| Path | Responsibility |
+|---|---|
+| `pages/` | Route-level pages (Outline, Chapters, ChapterAnalysis, ReviewConfig, PipelinePanel, Settings…) — lazy-loaded via `React.lazy` in `App.tsx` |
+| `components/` | Reusable components (AIServiceSelector, ChapterAIChatEdit, VolumeReviewModal, ChapterReviewModal, LLMCandidate*, PartialRegenerateToolbar…) |
+| `store/` | Zustand global store (`index.ts` + typed hooks in `hooks.ts`) + `eventBus.ts` |
+| `services/api.ts` | Axios instance (`api` default export) + per-domain API objects (`chapterApi`, `aiProviderApi`, …) |
+| `types/index.ts` | Shared TS interfaces (146+ exports) |
+| `hooks/` | Generic hooks (`useAnnouncements.ts`) |
+| `theme/` | Theme system (`useThemeMode`, ThemeProvider, storage) |
+| `utils/` | Utilities (e.g. `sseClient.ts` — SSE streaming helper) |
+| `config/` | Config constants |
 
-<!--
-Document your project's frontend directory structure here.
+## Conventions
 
-Questions to answer:
-- Where do components live?
-- How are features/modules organized?
-- Where are shared utilities?
-- How are assets organized?
--->
-
-(To be filled by the team)
-
----
-
-## Directory Layout
-
-```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
-```
-
----
-
-## Module Organization
-
-<!-- How should new features be organized? -->
-
-(To be filled by the team)
-
----
-
-## Naming Conventions
-
-<!-- File and folder naming rules -->
-
-(To be filled by the team)
-
----
-
-## Examples
-
-<!-- Link to well-organized modules as examples -->
-
-(To be filled by the team)
+- Pages are **lazy-loaded routes** — never add a page as a static import in `App.tsx` (defeats code-splitting; main bundle must stay small).
+- AI interactions reuse the shared selector components (`AIServiceSelector`, `LLMMultiSelector`) instead of each page building its own provider/model pickers.
+- Model display must always include **provider + model** (`OpenCode Go · deepseek-v4-pro`), including placeholders.

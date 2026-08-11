@@ -1,51 +1,26 @@
 # Type Safety
 
-> Type safety patterns in this project.
+> TypeScript conventions for the frontend.
 
----
+## Conventions
 
-## Overview
+- All shared shapes live in `types/index.ts` (146+ interfaces) — request/response payloads, `Chapter`, `Project`, `Outline`, `LLMComparison*`, etc.
+- API methods are typed via generics: `api.get<unknown, T>(url)` — the response type is `T`.
+- **Prefer strict typing over `as` casts**: `useState<Chapter[]>([])`, typed props interfaces for every component.
+- `tsconfig` strict mode is enforced by `npm run build` (tsc -b) — zero `any` leaks in committed code.
 
-<!--
-Document your project's type safety conventions here.
+## Patterns
 
-Questions to answer:
-- What type system do you use?
-- How are types organized?
-- What validation library do you use?
-- How do you handle type inference?
--->
+```tsx
+interface Props { chapterId: string; onApply: (content: string) => void; }
+export default function MyComp({ chapterId, onApply }: Props) { ... }
+```
 
-(To be filled by the team)
+- API object responses that are unions/narrowed: define explicit types rather than `Record<string, any>`.
+- `AIServiceSelection` / `ReviewProblem` / `ChapterReviewRecord` — exported from their components, import the type where needed.
 
----
+## Anti-patterns
 
-## Type Organization
-
-<!-- Where types are defined, shared types vs local types -->
-
-(To be filled by the team)
-
----
-
-## Validation
-
-<!-- Runtime validation patterns (Zod, Yup, io-ts, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Common Patterns
-
-<!-- Type utilities, generics, type guards -->
-
-(To be filled by the team)
-
----
-
-## Forbidden Patterns
-
-<!-- any, type assertions, etc. -->
-
-(To be filled by the team)
+- ❌ `(result as any).xxx` in committed code (temporary debugging only).
+- ❌ Inline `Record<string, any>` when the shape is known.
+- ❌ `import { api } from '../services/api'` — `api` is the **default** export; named exports are the per-domain objects (`chapterApi`, `aiProviderApi`…).

@@ -1,51 +1,22 @@
 # Hook Guidelines
 
-> How hooks are used in this project.
+> Custom hook conventions for the frontend.
 
----
+## Existing hooks
 
-## Overview
+- `hooks/useAnnouncements.ts` — global announcements.
+- `theme/useThemeMode.ts` — resolved dark/light mode (`resolvedMode` used by ReactDiffViewer etc.).
+- `store/hooks.ts` — store-wrapped data hooks.
 
-<!--
-Document your project's hook conventions here.
+## Conventions
 
-Questions to answer:
-- What custom hooks do you have?
-- How do you handle data fetching?
-- What are the naming conventions?
-- How do you share stateful logic?
--->
+- Name hooks `useXxx`; return plain values or a small object.
+- **Event listeners/effects must clean up**: return cleanup from `useEffect` (remove listeners, clear intervals).
+- Polling hooks: keep interval id + in-flight flag in `useRef`; guard against overlapping requests (a request-id counter); stop polling when no active items.
+- Respect refs that mirror props (`currentProjectIdRef.current = currentProject?.id`) when async callbacks need the latest value without re-subscribing.
 
-(To be filled by the team)
+## Anti-patterns
 
----
-
-## Custom Hook Patterns
-
-<!-- How to create and structure custom hooks -->
-
-(To be filled by the team)
-
----
-
-## Data Fetching
-
-<!-- How data fetching is handled (React Query, SWR, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Naming Conventions
-
-<!-- Hook naming rules (use*, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Hook-related mistakes your team has made -->
-
-(To be filled by the team)
+- ❌ Hooks that create intervals without cleanup (leak + duplicate polls after unmount/remount).
+- ❌ Async work in render; use `useEffect` + state.
+- ❌ Recreating callbacks every render when they're used as effect deps (use `useCallback` with stable deps).

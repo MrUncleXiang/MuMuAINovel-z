@@ -1,51 +1,30 @@
 # State Management
 
-> How state is managed in this project.
+> Global vs local state conventions for the frontend.
 
----
+## Global store (Zustand)
 
-## Overview
+- `store/index.ts`: `useStore` via `create<AppState>()` — holds cross-page data: `currentProject`, `projects`, `outlines`, `chapters`, `currentChapter`, setters for each.
+- `store/hooks.ts`: typed convenience hooks that wrap `useStore` + API calls (e.g. load project list into store).
+- `store/eventBus.ts`: lightweight pub/sub for cross-component events (e.g. background task completion).
 
-<!--
-Document your project's state management conventions here.
+### When to put state in the store
 
-Questions to answer:
-- What state management solution do you use?
-- How is local vs global state decided?
-- How do you handle server state?
-- What are the patterns for derived state?
--->
+- Data shared across pages/sidebar/header: project, outlines, chapters.
+- Cross-component coordination (task status, refresh triggers).
 
-(To be filled by the team)
+### When to keep state local (`useState`)
 
----
+- Modal/form state, tab active keys, transient UI flags, polling refs.
+- Page-specific data that other pages don't read.
 
-## State Categories
+## Data fetching
 
-<!-- Local state, global state, server state, URL state -->
+- Pages call `services/api.ts` objects (`chapterApi.getChapters(...)`) then push into the store or local state.
+- Long-running AI tasks: create background task → poll `GET /api/tasks/{id}` (or dedicated status endpoints) → on completion refresh local data. Use `useRef` for polling interval + in-flight guards, and clear intervals on unmount.
 
-(To be filled by the team)
+## Anti-patterns
 
----
-
-## When to Use Global State
-
-<!-- Criteria for promoting state to global -->
-
-(To be filled by the team)
-
----
-
-## Server State
-
-<!-- How server data is cached and synchronized -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- State management mistakes your team has made -->
-
-(To be filled by the team)
+- ❌ Duplicating the same list data in many local `useState`s when the store already has it.
+- ❌ Polling without cleanup (interval leaks after unmount).
+- ❌ Blocking re-renders with heavy synchronous work in render.
