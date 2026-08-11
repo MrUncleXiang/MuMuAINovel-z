@@ -159,7 +159,7 @@ export default function AIProviderManagement() {
           return <Col xs={24} md={12} key={key}><Card size="small" title={label}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Select allowClear placeholder="跟随全局默认" value={route?.provider_config_id} style={{ width: '100%' }} options={providers.filter(p => p.enabled).map(p => ({ value: p.id, label: `${p.name}（${p.protocol}）` }))} onChange={id => void saveRoute(key, id, undefined)} />
-              <Select allowClear showSearch placeholder="使用该服务的默认模型" value={route?.model} disabled={!provider} style={{ width: '100%' }} options={(provider?.models || []).map(m => ({ value: m, label: m }))} onChange={model => void saveRoute(key, route?.provider_config_id, model)} />
+              <Select allowClear showSearch placeholder={provider ? `${provider.name} · ${provider.default_model || '服务默认模型'}` : "使用该服务的默认模型"} value={route?.model} disabled={!provider} style={{ width: '100%' }} options={(provider?.models || []).map(m => ({ value: m, label: m }))} onChange={model => void saveRoute(key, route?.provider_config_id, model)} />
             </Space>
           </Card></Col>;
         })}</Row>

@@ -63,6 +63,8 @@ export default function PipelinePanel() {
   const [creationConfig, setCreationConfig] = useState<ProjectCreationConfigResponse | null>(null);
   const chapterProviderId = Form.useWatch('chapter_provider', configForm);
   const analysisProviderId = Form.useWatch('analysis_provider', configForm);
+  const chapterProvider = providers.find(p => p.id === chapterProviderId);
+  const analysisProvider = providers.find(p => p.id === analysisProviderId);
   const mcpEnabled = Form.useWatch('mcp_enabled', configForm);
 
   useEffect(() => {
@@ -414,15 +416,15 @@ export default function PipelinePanel() {
                     <Select allowClear placeholder="使用默认路由" options={providers.map(p => ({ value: p.id, label: p.name }))} />
                   </Form.Item>
                   <Form.Item name="chapter_model" label="章节写作 - 模型">
-                    <Select allowClear placeholder="使用默认模型"
-                      options={(providers.find(p => p.id === chapterProviderId)?.models ?? []).map(m => ({ value: m, label: m }))} />
+                    <Select allowClear placeholder={chapterProvider ? `${chapterProvider.name} · ${chapterProvider.default_model || '服务默认模型'}` : "使用默认路由模型"}
+                      options={(chapterProvider?.models ?? []).map(m => ({ value: m, label: m }))} />
                   </Form.Item>
                   <Form.Item name="analysis_provider" label="章节分析 - AI 服务">
                     <Select allowClear placeholder="使用默认路由" options={providers.map(p => ({ value: p.id, label: p.name }))} />
                   </Form.Item>
                   <Form.Item name="analysis_model" label="章节分析 - 模型">
-                    <Select allowClear placeholder="使用默认模型"
-                      options={(providers.find(p => p.id === analysisProviderId)?.models ?? []).map(m => ({ value: m, label: m }))} />
+                    <Select allowClear placeholder={analysisProvider ? `${analysisProvider.name} · ${analysisProvider.default_model || '服务默认模型'}` : "使用默认路由模型"}
+                      options={(analysisProvider?.models ?? []).map(m => ({ value: m, label: m }))} />
                   </Form.Item>
                   <Row gutter={16}>
                     <Col span={8}><Form.Item name="target_word_count" label="每章字数" rules={[{ required: true }]}><InputNumber min={500} max={10000} style={{ width: '100%' }} /></Form.Item></Col>

@@ -61,7 +61,7 @@ export default function AIServiceSelector({ usageType, value, onChange, disabled
           showSearch
           disabled={disabled}
           value={value?.model}
-          placeholder={sourceProvider ? `默认服务商: ${sourceProvider.name}` : "不指定，使用服务默认模型"}
+          placeholder={sourceProvider ? `默认：${sourceProvider.name} · ${sourceProvider.default_model || '服务默认模型'}` : "不指定，使用服务默认模型"}
           options={modelOptions}
           onChange={model => onChange?.({ ...value, provider_config_id: value?.provider_config_id ?? defaultProvider?.id, model })}
         />
