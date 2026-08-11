@@ -250,6 +250,14 @@ class BaseAIClient(ABC):
                 max_connections=http_cfg.max_connections,
                 keepalive_expiry=http_cfg.keepalive_expiry,
             ),
+            # 关键：部分上游（如 OpenCode Go 的 Cloudflare）按 UA 指纹拦截
+            # 无 UA / python-httpx UA 会被 403(1010)/空响应/截断/524，必须伪装浏览器 UA
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+            },
         )
         _http_client_pool[client_key] = client
         logger.info(f"✅ 创建 HTTP 客户端: {client_key}")
