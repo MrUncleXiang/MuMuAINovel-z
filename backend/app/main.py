@@ -266,6 +266,14 @@ generated_covers_dir.mkdir(parents=True, exist_ok=True)
 if static_dir.exists():
     app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
     app.mount("/generated-assets/covers", StaticFiles(directory=str(generated_covers_dir)), name="generated-covers")
+
+    @app.middleware("http")
+    async def static_assets_cache_headers(request, call_next):
+        """assets/ 下的 hash 文件名资源可长期缓存（内容不变则 URL 不变）"""
+        response = await call_next(request)
+        if request.url.path.startswith("/assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
     
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
@@ -275,7 +283,7 @@ if static_dir.exists():
                 status_code=404,
                 content={"detail": "API路径不存在"}
             )
-        
+
         file_path = static_dir / full_path
         try:
             resolved_file = file_path.resolve()
@@ -288,12 +296,22 @@ if static_dir.exists():
             )
 
         if resolved_file.is_file():
+            # 静态资源（assets/ 下 hash 文件名）可长期缓存
+            if full_path.startswith("assets/") and full_path != "index.html":
+                return FileResponse(
+                    resolved_file,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                )
             return FileResponse(resolved_file)
-        
+
         index_file = static_dir / "index.html"
         if index_file.exists():
-            return FileResponse(index_file)
-        
+            # index.html 不缓存：每次刷新校验最新构建（JS 文件名带 hash，引用新版本即加载新 JS）
+            return FileResponse(
+                index_file,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+
         return JSONResponse(
             status_code=404,
             content={"detail": "页面不存在"}
