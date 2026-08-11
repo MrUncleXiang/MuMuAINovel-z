@@ -910,6 +910,35 @@ async def _analyze_chapter_background_impl(
             on_retry=on_retry_callback,
             characters_info=analysis_context.characters_info
         )
+
+        # 3b. 兜底重试：主模型（常为 flash）失败 → 用 chapter_analysis 路由（pro）再完整分析一次
+        if not analysis_result:
+            fallback_reason = last_fail_reason.get("msg", "")
+            logger.warning(f"🔄 主模型分析失败（{fallback_reason[:80]}），尝试 pro 兜底重试...")
+            try:
+                from app.services.ai_provider_service import create_routed_ai_service as _cras
+                fallback_ai = await _cras(
+                    db=db_session, user_id=user_id, usage_type="chapter_analysis",
+                    task_trace_id=task_id, project_id=project_id,
+                    chapter_id=chapter_id, enable_mcp=False,
+                )
+                fallback_analyzer = PlotAnalyzer(fallback_ai)
+                fallback_result = await fallback_analyzer.analyze_chapter(
+                    chapter_number=chapter.chapter_number,
+                    title=chapter.title,
+                    content=chapter.content,
+                    word_count=chapter.word_count or len(chapter.content),
+                    user_id=user_id,
+                    db=db_session,
+                    existing_foreshadows=analysis_context.existing_foreshadows,
+                    on_retry=on_retry_callback,
+                    characters_info=analysis_context.characters_info
+                )
+                if fallback_result:
+                    logger.info("✅ pro 兜底分析成功，采用兜底结果")
+                    analysis_result = fallback_result
+            except Exception as fb_err:
+                logger.warning(f"⚠️ pro 兜底分析失败: {fb_err}")
         
         if not analysis_result:
             async with write_lock:
