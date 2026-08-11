@@ -3047,37 +3047,6 @@ export default function Chapters() {
               <Form.Item name="title" noStyle>
                 <Input disabled style={{ flex: 1 }} />
               </Form.Item>
-              {editingId && (() => {
-                const currentChapter = chapters.find(c => c.id === editingId);
-                const canGenerate = currentChapter ? canGenerateChapter(currentChapter) : false;
-                const disabledReason = currentChapter ? getGenerateDisabledReason(currentChapter) : '';
-
-                return (
-                  <>
-                  <Button
-                    type="primary"
-                    icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
-                    onClick={() => currentChapter && showGenerateModal(currentChapter)}
-                    loading={isContinuing}
-                    disabled={!canGenerate}
-                    danger={!canGenerate}
-                    style={{ fontWeight: 'bold' }}
-                    title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作（流式）'}
-                  >
-                    {isMobile ? 'AI' : 'AI创作'}
-                  </Button>
-                  <Button
-                    icon={<RocketOutlined />}
-                    onClick={handleBackgroundGenerate}
-                    disabled={!canGenerate || isContinuing}
-                    style={{ fontWeight: 'bold' }}
-                    title={!canGenerate ? disabledReason : '后台生成：关闭浏览器也不影响，完成后自动保存'}
-                  >
-                    {isMobile ? '后台' : '后台生成'}
-                  </Button>
-                  </>
-                );
-              })()}
             </Space.Compact>
           </Form.Item>
 
@@ -3108,6 +3077,40 @@ export default function Chapters() {
             forceRender: true,
             children: (
               <>
+          {/* 生成动作入口（AI创作流式 / 后台生成） */}
+          {editingId && (() => {
+            const currentChapter = chapters.find(c => c.id === editingId);
+            const canGenerate = currentChapter ? canGenerateChapter(currentChapter) : false;
+            const disabledReason = currentChapter ? getGenerateDisabledReason(currentChapter) : '';
+            return (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <Button
+                  type="primary"
+                  icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
+                  onClick={() => currentChapter && showGenerateModal(currentChapter)}
+                  loading={isContinuing}
+                  disabled={!canGenerate}
+                  danger={!canGenerate}
+                  style={{ fontWeight: 'bold' }}
+                  title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作（流式）'}
+                >
+                  {isMobile ? 'AI' : 'AI创作'}
+                </Button>
+                <Button
+                  icon={<RocketOutlined />}
+                  onClick={handleBackgroundGenerate}
+                  disabled={!canGenerate || isContinuing}
+                  style={{ fontWeight: 'bold' }}
+                  title={!canGenerate ? disabledReason : '后台生成：关闭浏览器也不影响，完成后自动保存'}
+                >
+                  {isMobile ? '后台' : '后台生成'}
+                </Button>
+                <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>
+                  配置好下方选项后，点「AI 创作」流式生成，或「后台生成」稍后自动保存
+                </span>
+              </div>
+            );
+          })()}
           {/* 第一行：写作风格 + 叙事角度 */}
           <div style={{
             display: isMobile ? 'block' : 'flex',
