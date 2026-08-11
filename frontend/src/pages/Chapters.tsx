@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, Checkbox, theme } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -11,11 +11,13 @@ import LLMMultiSelector from '../components/LLMMultiSelector';
 import LLMCandidateCard from '../components/LLMCandidateCard';
 import LLMCandidateDiffModal from '../components/LLMCandidateDiffModal';
 import { projectApi, writingStyleApi, chapterApi, llmComparisonApi, aiProviderApi } from '../services/api';
+import api from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection , AIProviderConfig} from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ChapterAIChatEdit from '../components/ChapterAIChatEdit';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
+import ChapterReviewModal, { type ChapterReviewRecord } from '../components/ChapterReviewModal';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
@@ -102,6 +104,10 @@ export default function Chapters() {
   const analysisPollingRequestIdRef = useRef(0);
   const currentProjectIdRef = useRef<string | undefined>(currentProject?.id);
   currentProjectIdRef.current = currentProject?.id;
+  // ── 章节审查记录（最近一次）──
+  const [reviewRecords, setReviewRecords] = useState<Record<string, ChapterReviewRecord>>({});
+  const [reviewModal, setReviewModal] = useState<ChapterReviewRecord | null>(null);
+  const [reviewModalTitle, setReviewModalTitle] = useState('');
 
   // 列表查询与分页状态
   const [chapterSearchKeyword, setChapterSearchKeyword] = useState('');
@@ -403,6 +409,25 @@ export default function Chapters() {
       }
     };
   }, []);
+
+  // 加载本书各章节最近一次审查记录
+  useEffect(() => {
+    if (!currentProject?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = (await api.get(`/chapters/project/${currentProject.id}/reviews`)) as { items: ChapterReviewRecord[] };
+        if (!cancelled) {
+          const map: Record<string, ChapterReviewRecord> = {};
+          for (const item of r.items || []) map[item.chapter_id] = item;
+          setReviewRecords(map);
+        }
+      } catch {
+        // 无记录时保持空
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentProject?.id]);
 
   const clearAnalysisPollingIfIdle = useCallback(() => {
     if (activeAnalysisPollingIdsRef.current.size === 0 && analysisPollingIntervalRef.current) {
@@ -2418,6 +2443,28 @@ export default function Chapters() {
                       </Button>
                     );
                   })(),
+                  (() => {
+                    const review = reviewRecords[item.id];
+                    const hasContent = item.content && item.content.trim() !== '';
+                    return (
+                      <Button
+                        type="text"
+                        icon={<SearchOutlined />}
+                        onClick={() => {
+                          setReviewModal(review || null);
+                          setReviewModalTitle(item.title);
+                        }}
+                        disabled={!hasContent}
+                        title={!hasContent ? '请先生成章节内容' : '查看该章最近一次审查报告'}
+                      >
+                        {review && review.problems.length > 0
+                          ? `审查 ${review.problems.length} 个问题`
+                          : review
+                            ? '审查 ✓'
+                            : '审查'}
+                      </Button>
+                    );
+                  })(),
                   <Button
                     type="text"
                     icon={<SettingOutlined />}
@@ -3294,6 +3341,13 @@ export default function Chapters() {
           }}
         />
       )}
+
+      <ChapterReviewModal
+        record={reviewModal}
+        chapterTitle={reviewModalTitle}
+        projectId={currentProject?.id || ''}
+        onClose={() => setReviewModal(null)}
+      />
 
       {/* 批量生成对话框 */}
       <Modal

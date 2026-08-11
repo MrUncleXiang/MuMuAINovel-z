@@ -3332,6 +3332,12 @@ async def _run_volume_review_bg(task_id: str, bg_user_id: str):
                         db, chapter=ch, user_id=bg_user_id, ai_service=ai_service,
                         max_rounds=2, enabled=True, apply_fix=False,
                     )
+                    # 保存审查记录（卷检查来源）
+                    try:
+                        from app.services.review_record_service import save_review_record
+                        await save_review_record(db, project_id=project_id, chapter=ch, report=r, source="volume")
+                    except Exception:
+                        pass
                     chapter_reports.append({
                         "chapter_id": str(ch.id),
                         "chapter_number": ch.chapter_number,
@@ -3375,6 +3381,43 @@ async def _run_volume_review_bg(task_id: str, bg_user_id: str):
         except Exception as e:
             logger.error(f"❌ 卷检查失败: {e}")
             await tracker.error(str(e))
+
+
+@router.get("/project/{project_id}/reviews", summary="获取项目各章节最近一次审查记录")
+async def get_project_reviews(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    """返回每章最近一条审查记录（按章节排序）"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    await verify_project_access(project_id, user_id, db)
+
+    from app.models.chapter_review_record import ChapterReviewRecord
+    # 取每章最新一条：子查询按 chapter_id 取最大 created_at
+    records = list((await db.scalars(
+        select(ChapterReviewRecord)
+        .where(ChapterReviewRecord.project_id == project_id)
+        .order_by(ChapterReviewRecord.chapter_number, ChapterReviewRecord.created_at.desc())
+    )).all())
+    latest: dict = {}
+    for r in records:
+        if r.chapter_id not in latest:
+            latest[r.chapter_id] = r
+    items = []
+    for r in sorted(latest.values(), key=lambda x: (x.chapter_number, str(x.created_at))):
+        items.append({
+            "chapter_id": r.chapter_id,
+            "chapter_number": r.chapter_number,
+            "problems": json.loads(r.problems) if r.problems else [],
+            "major": r.major,
+            "rounds": r.rounds,
+            "source": r.source,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {"project_id": project_id, "items": items}
 
 
 async def _check_volume_continuity(
@@ -3745,6 +3788,12 @@ async def execute_batch_generation_in_order(
                             logger.info(f"🔍 审查通过：第{chapter.chapter_number}章无问题")
                         if review_report.step_errors:
                             logger.warning(f"⚠️ 审查部分步骤失败（不阻断）: {review_report.step_errors}")
+                        # 保存审查记录（供章节列表/剧情分析页查看）
+                        try:
+                            from app.services.review_record_service import save_review_record
+                            await save_review_record(db_session, project_id=task.project_id, chapter=chapter, report=review_report, source="auto")
+                        except Exception:
+                            pass
                     except Exception as review_err:
                         logger.warning(f"⚠️ 章节审查失败（不阻断生成）: {review_err}")
 
