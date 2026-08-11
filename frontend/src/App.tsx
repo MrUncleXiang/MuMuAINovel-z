@@ -1,37 +1,50 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import ProjectList from './pages/ProjectList';
-import ProjectWizardNew from './pages/ProjectWizardNew';
-import Inspiration from './pages/Inspiration';
-import ProjectDetail from './pages/ProjectDetail';
-import WorldSetting from './pages/WorldSetting';
-import Outline from './pages/Outline';
-import Characters from './pages/Characters';
-import Careers from './pages/Careers';
-import Relationships from './pages/Relationships';
-import RelationshipGraph from './pages/RelationshipGraph';
-import Organizations from './pages/Organizations';
-import Chapters from './pages/Chapters';
-import ChapterReader from './pages/ChapterReader';
-import ChapterAnalysis from './pages/ChapterAnalysis';
-import PipelinePanel from './pages/PipelinePanel';
-import ThemeTemplates from './pages/ThemeTemplates';
-import Foreshadows from './pages/Foreshadows';
-import WritingStyles from './pages/WritingStyles';
-import PromptWorkshop from './pages/PromptWorkshop';
-import Settings from './pages/Settings';
-import MCPPlugins from './pages/MCPPlugins';
-import UserManagement from './pages/UserManagement';
-import PromptTemplates from './pages/PromptTemplates';
-import SkillChat from './pages/SkillChat';
-import SkillManage from './pages/SkillManage';
-import AIUsageLogs from './pages/AIUsageLogs';
+import { Spin } from 'antd';
+
+// 路由懒加载：首屏只加载当前页面，其余页面按需分包（显著减少首屏 JS）
+const ProjectList = lazy(() => import('./pages/ProjectList'));
+const ProjectWizardNew = lazy(() => import('./pages/ProjectWizardNew'));
+const Inspiration = lazy(() => import('./pages/Inspiration'));
+const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
+const WorldSetting = lazy(() => import('./pages/WorldSetting'));
+const Outline = lazy(() => import('./pages/Outline'));
+const Characters = lazy(() => import('./pages/Characters'));
+const Careers = lazy(() => import('./pages/Careers'));
+const Relationships = lazy(() => import('./pages/Relationships'));
+const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
+const Organizations = lazy(() => import('./pages/Organizations'));
+const Chapters = lazy(() => import('./pages/Chapters'));
+const ChapterReader = lazy(() => import('./pages/ChapterReader'));
+const ChapterAnalysis = lazy(() => import('./pages/ChapterAnalysis'));
+const PipelinePanel = lazy(() => import('./pages/PipelinePanel'));
+const ThemeTemplates = lazy(() => import('./pages/ThemeTemplates'));
+const Foreshadows = lazy(() => import('./pages/Foreshadows'));
+const WritingStyles = lazy(() => import('./pages/WritingStyles'));
+const PromptWorkshop = lazy(() => import('./pages/PromptWorkshop'));
+const Settings = lazy(() => import('./pages/Settings'));
+const MCPPlugins = lazy(() => import('./pages/MCPPlugins'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const PromptTemplates = lazy(() => import('./pages/PromptTemplates'));
+const SkillChat = lazy(() => import('./pages/SkillChat'));
+const SkillManage = lazy(() => import('./pages/SkillManage'));
+const ReviewConfig = lazy(() => import('./pages/ReviewConfig'));
+const AIUsageLogs = lazy(() => import('./pages/AIUsageLogs'));
 // import Polish from './pages/Polish';
-import Login from './pages/Login';
-import AuthCallback from './pages/AuthCallback';
+const Login = lazy(() => import('./pages/Login'));
+const AuthCallback = lazy(() => import('./pages/AuthCallback'));
 import ProtectedRoute from './components/ProtectedRoute';
 import AppFooter from './components/AppFooter';
 import SpringFestival from './components/SpringFestival';
 import './App.css';
+
+function PageLoading() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+      <Spin size="large" tip="加载中..." />
+    </div>
+  );
+}
 
 function App() {
   return (
@@ -44,7 +57,8 @@ function App() {
           v7_relativeSplatPath: true,
         }}
       >
-        <Routes>
+        <Suspense fallback={<PageLoading />}>
+          <Routes>
           <Route path="/login" element={<><Login /><AppFooter /></>} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
@@ -74,11 +88,13 @@ function App() {
             <Route path="prompt-workshop" element={<PromptWorkshop />} />
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
+            <Route path="review-config" element={<ReviewConfig />} />
             <Route path="ai-usage" element={<AIUsageLogs />} />
             <Route path="pipeline" element={<PipelinePanel />} />
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>
-        </Routes>
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </>
   );

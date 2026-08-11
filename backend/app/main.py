@@ -168,6 +168,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(AuthMiddleware)
 
+# gzip 压缩静态资源与 API 响应（JS/CSS 可省 ~75% 传输量，显著加快页面加载）
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 if config_settings.debug:
     app.add_middleware(
         CORSMiddleware,
