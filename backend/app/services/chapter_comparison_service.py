@@ -27,6 +27,29 @@ class FrozenChapterGeneration:
     input_snapshot: dict
     prompt: str
     parameters: dict
+    selection_variants: dict = None  # 每个模型的单独配置：{provider\u0000model: {prompt, parameters, skill_name, target_word_count}}
+
+    def __post_init__(self):
+        if self.selection_variants is None:
+            self.selection_variants = {}
+
+
+async def _build_system_prompt(skill_key: Optional[str], style_content: str) -> tuple[Optional[str], Optional[str]]:
+    """按 Skill + 写作风格构建系统提示词，返回 (system_prompt, skill_name)。"""
+    system_prompt = None
+    skill_name = None
+    if skill_key:
+        from app.services.skill_loader import get_all_skills_cached
+        skill = next((item for item in get_all_skills_cached() if item["template_key"] == skill_key), None)
+        if skill is None:
+            raise ValueError("选择的 Skill 不存在")
+        skill_name = skill["template_name"]
+        system_prompt = f"【⚡ Skill 工作流：{skill_name}】\n\n{skill['content']}\n\n⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"
+        if style_content:
+            system_prompt += f"\n\n【🎨 写作风格要求 - 补充】\n\n{style_content}"
+    elif style_content:
+        system_prompt = f"【🎨 写作风格要求 - 最高优先级】\n\n{style_content}\n\n⚠️ 请严格遵循上述写作风格要求进行创作！"
+    return system_prompt, skill_name
 
 
 async def build_frozen_chapter_generation(
@@ -36,7 +59,7 @@ async def build_frozen_chapter_generation(
     user_id: str,
     request: ChapterComparisonCreateRequest,
 ) -> FrozenChapterGeneration:
-    """只构建一次，确保不同模型收到完全相同的正文提示和参数。"""
+    """构建一次冻结的正文输入；不同模型默认收到完全相同的提示和参数，也可单独配置 Skill / 目标字数。"""
     project = await db.scalar(select(Project).where(
         Project.id == chapter.project_id,
         Project.user_id == user_id,
@@ -111,25 +134,41 @@ async def build_frozen_chapter_generation(
         template_key = "CHAPTER_GENERATION_ONE_TO_MANY"
 
     template = await PromptService.get_template(template_key, user_id, db)
-    prompt = PromptService.format_prompt(template, **common)
-    if style_content:
-        prompt = WritingStyleManager.apply_style_to_prompt(prompt, style_content)
 
-    system_prompt = None
-    skill_name = None
-    if request.skill_key:
-        from app.services.skill_loader import get_all_skills_cached
-        skill = next((item for item in get_all_skills_cached() if item["template_key"] == request.skill_key), None)
-        if skill is None:
-            raise ValueError("选择的 Skill 不存在")
-        skill_name = skill["template_name"]
-        system_prompt = f"【⚡ Skill 工作流：{skill_name}】\n\n{skill['content']}\n\n⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"
+    def render_prompt(word_count: int) -> str:
+        variant_common = dict(common)
+        variant_common["target_word_count"] = word_count
+        rendered = PromptService.format_prompt(template, **variant_common)
         if style_content:
-            system_prompt += f"\n\n【🎨 写作风格要求 - 补充】\n\n{style_content}"
-    elif style_content:
-        system_prompt = f"【🎨 写作风格要求 - 最高优先级】\n\n{style_content}\n\n⚠️ 请严格遵循上述写作风格要求进行创作！"
+            rendered = WritingStyleManager.apply_style_to_prompt(rendered, style_content)
+        return rendered
 
-    max_tokens = max(2000, min(request.target_word_count * 3, 16000))
+    # 批次级（全局默认）提示词与参数：沿用原有逻辑，同时作为旧批次/兜底
+    base_prompt = render_prompt(request.target_word_count)
+    base_system_prompt, base_skill_name = await _build_system_prompt(request.skill_key, style_content)
+    base_max_tokens = max(2000, min(request.target_word_count * 3, 16000))
+
+    # 每个并发模型可单独配置 Skill 与目标字数；未配置则跟随全局默认
+    selection_variants: dict[str, dict] = {}
+    for selection in request.selections:
+        variant_word_count = selection.target_word_count or request.target_word_count
+        variant_skill_key = selection.skill_key or request.skill_key
+        variant_system_prompt, variant_skill_name = await _build_system_prompt(variant_skill_key, style_content)
+        variant_max_tokens = max(2000, min(variant_word_count * 3, 16000))
+        selection_variants[f"{selection.provider_config_id}\u0000{selection.model}"] = {
+            "prompt": render_prompt(variant_word_count),
+            "parameters": {
+                "max_tokens": variant_max_tokens,
+                "system_prompt": variant_system_prompt,
+                "tool_choice": "required",
+                "auto_mcp": bool(request.enable_mcp),
+            },
+            "skill_key": variant_skill_key,
+            "skill_name": variant_skill_name,
+            "target_word_count": variant_word_count,
+        }
+
+    max_tokens = base_max_tokens
     return FrozenChapterGeneration(
         input_snapshot={
             "chapter_id": chapter.id,
@@ -143,20 +182,22 @@ async def build_frozen_chapter_generation(
             "style_id": request.style_id,
             "style_name": style_name,
             "skill_key": request.skill_key,
-            "skill_name": skill_name,
+            "skill_name": base_skill_name,
             "narrative_perspective": perspective,
             "target_word_count": request.target_word_count,
             "formal_content_before": chapter.content or "",
             "formal_content_hash": chapter_content_hash(chapter.content),
             "formal_updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None,
+            "selection_variants": selection_variants,
         },
-        prompt=prompt,
+        prompt=base_prompt,
         parameters={
             "max_tokens": max_tokens,
-            "system_prompt": system_prompt,
+            "system_prompt": base_system_prompt,
             "tool_choice": "required",
             "auto_mcp": bool(request.enable_mcp),
         },
+        selection_variants=selection_variants,
     )
 
 
@@ -191,7 +232,20 @@ async def generate_chapter_candidate(
 ) -> CandidateGenerationResult:
     from app.services.ai_provider_service import create_routed_ai_service
 
-    params = dict(batch.parameters_snapshot or {})
+    # 优先使用该模型单独配置的提示词与参数（Skill / 字数）；旧批次无单独配置时回退到批次级快照
+    variant = None
+    snap = batch.input_snapshot or {}
+    if candidate.provider_config_id:
+        variant = (snap.get("selection_variants") or {}).get(
+            f"{candidate.provider_config_id}\u0000{candidate.model}"
+        )
+    if variant:
+        prompt = variant.get("prompt") or batch.prompt_snapshot
+        params = dict(variant.get("parameters") or {})
+    else:
+        prompt = batch.prompt_snapshot
+        params = dict(batch.parameters_snapshot or {})
+
     service = await create_routed_ai_service(
         db,
         user_id=batch.user_id,
@@ -204,7 +258,7 @@ async def generate_chapter_candidate(
         enable_mcp=bool(params.get("auto_mcp", True)),
     )
     started = perf_counter()
-    result = await service.generate_text(prompt=batch.prompt_snapshot, **params)
+    result = await service.generate_text(prompt=prompt, **params)
     elapsed = int((perf_counter() - started) * 1000)
     usage = result.get("usage") or {}
     return CandidateGenerationResult(

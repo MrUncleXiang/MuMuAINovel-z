@@ -661,6 +661,21 @@ export const outlineApi = {
       chapter_previews: Array<{ title: string; summary: string }>;
     }>(`/outlines/${outlineId}/expand-advice`, data),
 
+  // 续写方向 AI 建议（灵感式对话多轮选项，不入库）
+  continueAdvice: (data: {
+    project_id: string;
+    context?: string;
+    feedback?: string;
+    instruction?: string;
+    skill_key?: string;
+    provider_config_id?: string;
+    model?: string;
+  }) =>
+    api.post<unknown, {
+      prompt: string;
+      options: Array<{ title: string; description: string; conflict?: string; plotline?: string }>;
+    }>('/outlines/continue-advice', data),
+
   retryComparisonCandidate: (batchId: string, candidateId: string) =>
     api.post<unknown, import('../types').LLMComparisonCandidate>(`/outlines/comparison-batches/${batchId}/retry/${candidateId}`),
 

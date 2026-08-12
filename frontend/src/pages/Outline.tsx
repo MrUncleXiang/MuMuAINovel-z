@@ -11,6 +11,7 @@ import { outlineApi, chapterApi, projectApi, characterApi, llmComparisonApi, aiP
 import type { ApiError, Character, LLMComparisonBatch, LLMComparisonCandidate, LLMComparisonSelection, Outline } from '../types';
 import AIServiceSelector, { type AIServiceSelection } from '../components/AIServiceSelector';
 import SkillSelector, { SKILL_CATEGORIES } from '../components/SkillSelector';
+import OutlineContinueAdvice from '../components/OutlineContinueAdvice';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useThemeMode } from '../theme/useThemeMode';
 import LLMMultiSelector from '../components/LLMMultiSelector';
@@ -167,6 +168,12 @@ export default function Outline() {
     try {
       const res = await outlineApi.getOutlineChapters(outline.id);
       const chapters = res.chapters || [];
+      // 卷还没有任何章节（从未展开）：不能直接写正文，提示并引导先展开
+      if (!res.has_chapters || chapters.length === 0) {
+        message.warning(`《${outline.title}》还没有章节，请先点击「展开」把大纲展开成章节，再写正文`);
+        void handleExpandOutline(outline.id, outline.title);
+        return;
+      }
       // 未生成 = 草稿状态 或 字数为 0
       const isPending = (ch: { status?: string; word_count?: number }) =>
         ch.status === 'draft' || !ch.word_count;
@@ -284,6 +291,7 @@ export default function Outline() {
 
   // ✅ 新增：记录大纲卡片内容的展开/折叠状态（默认折叠）
   const [outlineContentExpandStatus, setOutlineContentExpandStatus] = useState<Record<string, boolean>>({});
+  // 生成/续写弹窗内的 Tab 直接用非受控 defaultActiveKey（modal.confirm 内容静态渲染，受控 state 不会触发重渲染）
 
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
@@ -803,6 +811,12 @@ export default function Outline() {
     });
   };
 
+  // 确认 AI 续写方向建议：只填入表单（不触发续写），由用户点「开始续写」统一提交
+  const handleConfirmContinueAdvice = async (direction: string) => {
+    generateForm.setFieldsValue({ story_direction: direction });
+    message.success('方向已填入「故事发展方向」，可微调后点击下方「开始续写」');
+  };
+
   const showGenerateModal = async () => {
     const hasOutlines = outlines.length > 0;
     const initialMode = hasOutlines ? 'continue' : 'new';
@@ -827,7 +841,7 @@ export default function Outline() {
           <Tag color="blue">当前已有 {outlines.length} 卷</Tag>
         </Space>
       ) : 'AI生成大纲',
-      width: 700,
+      width: isMobile ? '92%' : 860,
       centered: true,
       content: (
         <Form
@@ -845,7 +859,17 @@ export default function Outline() {
             ...defaultSelection,
           }}
         >
-          <Form.Item label="生成方式" name="generation_mode" style={{ marginBottom: 8 }}>
+          {/* Tab 切换：直接续写 / AI 方向抉择 */}
+          <Tabs
+            defaultActiveKey="direct"
+            size={isMobile ? 'small' : 'middle'}
+            items={[
+              {
+                key: 'direct',
+                label: '✍️ 直接续写',
+                children: (
+                  <>
+                    <Form.Item label="生成方式" name="generation_mode" style={{ marginBottom: 8 }}>
             <Segmented
               block
               options={[
@@ -908,42 +932,90 @@ export default function Outline() {
               return (
                 <>
                   {isContinue && (
-                    <>
-                      <Form.Item
-                        label="故事发展方向"
-                        name="story_direction"
-                        tooltip="告诉AI你希望故事接下来如何发展"
-                      >
-                        <TextArea
-                          rows={3}
-                          placeholder="例如：主角遇到新的挑战、引入新角色、揭示关键秘密等..."
-                        />
-                      </Form.Item>
+                    <Form.Item
+                      label="故事发展方向"
+                      name="story_direction"
+                      tooltip="告诉AI你希望故事接下来如何发展；也可在「AI方向抉择」页签对话生成后自动填入"
+                    >
+                      <TextArea
+                        rows={3}
+                        placeholder="例如：主角遇到新的挑战、引入新角色、揭示关键秘密等..."
+                      />
+                    </Form.Item>
+                  )}
 
-                      <Form.Item
-                        label="情节阶段"
-                        name="plot_stage"
-                        tooltip="帮助AI理解当前故事所处的阶段"
-                      >
-                        <Select>
-                          <Select.Option value="development">发展阶段 - 继续展开情节</Select.Option>
-                          <Select.Option value="climax">高潮阶段 - 矛盾激化</Select.Option>
-                          <Select.Option value="ending">结局阶段 - 收束伏笔</Select.Option>
-                        </Select>
-                      </Form.Item>
-                    </>
+                  <Form.Item label="其他要求" name="requirements">
+                    <TextArea rows={2} placeholder="其他特殊要求（可选）" />
+                  </Form.Item>
+
+                </>
+              );
+            }}
+          </Form.Item>
+                </>
+              ),
+            },
+            {
+              key: 'advice',
+                label: '💬 AI 方向抉择',
+                children: hasOutlines ? (
+                  <>
+                    <div style={{ marginBottom: 10, fontSize: isMobile ? 12 : 13, color: token.colorTextSecondary }}>
+                      和 AI 对话确定续写方向：点选方向可继续深入，不满意可打字让 AI 重新生成；确认后自动填入「故事发展方向」，再点弹窗底部「开始续写」提交。
+                    </div>
+                    <OutlineContinueAdvice
+                      projectId={currentProject.id}
+                      isMobile={isMobile}
+                      getAISelection={() => ({
+                        skill_key: generateForm.getFieldValue('skill_key'),
+                        provider_config_id: generateForm.getFieldValue('provider_config_id'),
+                        model: generateForm.getFieldValue('model'),
+                      })}
+                      onConfirm={handleConfirmContinueAdvice}
+                    />
+                  </>
+                ) : (
+                  <Empty description="暂无可续写的大纲：请先创建/生成大纲，或在「生成模式」选择续写" />
+                ),
+              },
+            ]}
+          >
+          </Tabs>
+
+          <Divider style={{ margin: '12px 0 4px' }} plain>续写参数</Divider>
+
+          {/* 底部固定参数区（两 Tab 共用）：情节阶段 / 续写大纲数 / 叙事视角 / AI服务 */}
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('mode');
+              const isContinue = mode === 'continue' || (mode === 'auto' && hasOutlines);
+              return (
+                <>
+                  {isContinue && (
+                    <Form.Item
+                      label="情节阶段"
+                      name="plot_stage"
+                      tooltip="帮助AI理解当前故事所处的阶段"
+                    >
+                      <Select>
+                        <Select.Option value="development">发展阶段 - 继续展开情节</Select.Option>
+                        <Select.Option value="climax">高潮阶段 - 矛盾激化</Select.Option>
+                        <Select.Option value="ending">结局阶段 - 收束伏笔</Select.Option>
+                      </Select>
+                    </Form.Item>
                   )}
 
                   <Form.Item
-                    label={isContinue ? "续写章节数" : "章节数量"}
+                    label={isContinue ? "续写大纲数（条）" : "章节数量"}
                     name="chapter_count"
-                    rules={[{ required: true, message: '请输入章节数量' }]}
+                    rules={[{ required: true, message: isContinue ? '请输入续写大纲数' : '请输入章节数量' }]}
+                    tooltip={isContinue ? "本次续写将新增几条大纲（每条对应一卷）" : undefined}
                   >
                     <Input
                       type="number"
                       min={1}
                       max={50}
-                      placeholder={isContinue ? "建议5-10章" : "如：30"}
+                      placeholder={isContinue ? "建议5-10条" : "如：30"}
                     />
                   </Form.Item>
 
@@ -959,28 +1031,23 @@ export default function Outline() {
                     </Select>
                   </Form.Item>
 
-                  <Form.Item label="其他要求" name="requirements">
-                    <TextArea rows={2} placeholder="其他特殊要求（可选）" />
+                  {/* 模型选择：单模型（AIServiceSelector）/ 多模型比较（LLMMultiSelector），由 Form 的 generation_mode 驱动 */}
+                  <Form.Item noStyle shouldUpdate>
+                    {({ getFieldValue: gfv, setFieldsValue }) => (
+                      gfv('generation_mode') === 'compare' ? (
+                        <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
+                      ) : (
+                        <AIServiceSelector
+                          usageType="outline"
+                          value={{ provider_config_id: gfv('provider_config_id'), model: gfv('model') }}
+                          onChange={(selection) => setFieldsValue(selection)}
+                        />
+                      )
+                    )}
                   </Form.Item>
-
                 </>
               );
             }}
-          </Form.Item>
-
-          {/* 模型选择：单模型（AIServiceSelector）/ 多模型比较（LLMMultiSelector），由 Form 的 generation_mode 驱动 */}
-          <Form.Item noStyle shouldUpdate>
-            {({ getFieldValue, setFieldsValue }) => (
-              getFieldValue('generation_mode') === 'compare' ? (
-                <LLMMultiSelector value={outlineComparisonSelections} onChange={setOutlineComparisonSelections} disabled={outlineComparisonBusy} />
-              ) : (
-                <AIServiceSelector
-                  usageType="outline"
-                  value={{ provider_config_id: getFieldValue('provider_config_id'), model: getFieldValue('model') }}
-                  onChange={(selection) => setFieldsValue(selection)}
-                />
-              )
-            )}
           </Form.Item>
         </Form>
       ),

@@ -804,6 +804,90 @@ class PromptService:
 </user_input>
 """
     
+    # 续写方向 AI 建议（灵感式对话多轮选项，采纳后填入续写方向并触发续写）
+    OUTLINE_CONTINUE_ADVICE = """<system>
+你是资深网文编辑和续写策划，擅长分析小说已写大纲的整体走向，判断故事阶段，给出有区分度的续写方向建议。
+</system>
+
+<task>
+【任务】
+分析项目已有大纲的走向，给出 3~4 条**卷级大纲方向**建议。每条选项代表一条新大纲（卷）的规划方向，不是章节剧情。
+
+【对话状态判断】
+- 上一轮选择为空且无用户反馈：第一轮，从不同切面给大方向（如：主线推进/新势力登场/人物关系变化/悬念升级等）
+- 上一轮选择不为空且无用户反馈：基于用户选定的方向深入，给该方向下的具体落点与侧重（如取证突破/反派反扑/双线并行）
+- 用户反馈不为空：优先按反馈调整方向，重新给建议
+
+【输出要求】
+- 每条选项必须包含 4 个字段（都是卷级规划，**禁止写成故事梗概/章节剧情**）：
+  - title：卷主题（≤20字）
+  - description：这卷讲什么，一句话（≤60字）
+  - conflict：这卷的核心冲突（≤60字）
+  - plotline：推进哪条人物线/伏笔线（≤60字）
+- 方向之间要有区分度，避免同质化
+- 只输出 JSON，不要输出任何其他文字：
+
+{{
+  "prompt": "引导语：1-3句，概括当前故事状态并引导用户选择",
+  "options": [
+    {{
+      "title": "卷主题",
+      "description": "这卷讲什么",
+      "conflict": "核心冲突",
+      "plotline": "推进哪条人物线"
+    }}
+  ]
+}}
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<relationships priority="P1">
+【人物关系网络】
+{relationships_info}
+</relationships>
+
+<outline_context priority="P0">
+【最近卷大纲详情（structure 解析）】
+{outlines_detail}
+</outline_context>
+
+<older_outlines priority="P2">
+【更早卷速览（一行）】
+{older_outlines}
+</older_outlines>
+
+<conversation priority="P0">
+【对话状态】
+上一轮选择：{context}
+用户反馈：{feedback}
+</conversation>
+
+<user_input priority="P2">
+【额外关注点】
+{instruction}
+</user_input>
+"""
+    
     # 章节 AI 对话式修改提示词（编辑弹窗使用，指令驱动最小修改，SSE 返回完整新全文）
     CHAPTER_AI_EDIT = """<system>
 你是资深网文编辑，根据用户的修改指令对章节正文做精准的最小修改。
@@ -3251,6 +3335,14 @@ class PromptService:
                 "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
                              "location", "atmosphere", "rules", "characters_info", "order_index", 
                              "outline_title", "outline_content", "outline_structure", "neighbors", "instruction"]
+            },
+            "OUTLINE_CONTINUE_ADVICE": {
+                "name": "续写方向AI建议",
+                "category": "大纲生成",
+                "description": "续写方向AI建议（灵感式对话多轮选项，采纳后填入续写方向并触发续写）",
+                "parameters": ["title", "theme", "genre", "narrative_perspective", "time_period", 
+                             "location", "atmosphere", "rules", "characters_info", "relationships_info", 
+                             "outlines_detail", "older_outlines", "context", "feedback", "instruction"]
             },
             "CHAPTER_AI_EDIT": {
                 "name": "章节AI对话修改",

@@ -36,6 +36,7 @@ class OutlineResponse(BaseModel):
     structure: Optional[str] = None
     order_index: int
     has_chapters: Optional[bool] = None
+    chapter_count: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -166,6 +167,31 @@ class OutlineExpandAdviceResponse(BaseModel):
     strategy: str = Field(..., description="推荐策略: balanced/climax/detail")
     reason: str = Field(..., description="推荐理由")
     chapter_previews: list[ExpandChapterPreview] = Field(default_factory=list, description="每章主题预览")
+
+
+class ContinueAdviceOption(BaseModel):
+    """续写方向建议选项（卷级规划：标题+讲什么+冲突+人物线）"""
+    title: str = Field(..., description="方向标题")
+    description: str = Field(..., description="这卷讲什么（一句话）")
+    conflict: Optional[str] = Field(None, description="核心冲突")
+    plotline: Optional[str] = Field(None, description="推进哪条人物线")
+
+
+class OutlineContinueAdviceRequest(BaseModel):
+    """续写方向 AI 建议请求模型（结果不入库，仅展示与采纳）"""
+    project_id: str = Field(..., description="项目ID")
+    context: Optional[str] = Field(None, description="上一轮选择的方向/选项文字，空=第一轮")
+    feedback: Optional[str] = Field(None, description="用户反馈文字（要求重新生成时携带）")
+    instruction: Optional[str] = Field(None, description="额外关注点")
+    skill_key: Optional[str] = Field(None, description="Skill 标识")
+    provider_config_id: Optional[str] = Field(None, description="本次指定的AI服务配置ID")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class OutlineContinueAdviceResponse(BaseModel):
+    """续写方向 AI 建议响应模型"""
+    prompt: str = Field(..., description="引导语（AI 分析摘要+提问）")
+    options: list[ContinueAdviceOption] = Field(default_factory=list, description="方向选项（3~4条）")
 
 
 class ChapterPlanItem(BaseModel):

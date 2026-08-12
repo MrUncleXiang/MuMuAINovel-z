@@ -431,6 +431,7 @@ export interface Outline {
   structure?: string;
   order_index: number;
   has_chapters?: boolean;
+  chapter_count?: number;
   created_at: string;
   updated_at: string;
 }

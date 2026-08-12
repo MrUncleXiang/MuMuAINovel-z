@@ -30,6 +30,9 @@ from app.schemas.outline import (
     OutlineExpandAdviceRequest,
     OutlineExpandAdviceResponse,
     ExpandChapterPreview,
+    ContinueAdviceOption,
+    OutlineContinueAdviceRequest,
+    OutlineContinueAdviceResponse,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -105,6 +108,122 @@ def _build_characters_info(characters: List[Character]) -> str:
     ])
 
 
+def _build_outlines_detail(outlines: List[Outline], max_scenes: int = 2) -> str:
+    """构建最近卷的完整 structure 注入（summary + key_points + 角色/组织 + scenes + goal + emotion）"""
+    if not outlines:
+        return "（暂无大纲）"
+    blocks = []
+    for o in outlines:
+        text = f"第{o.order_index}卷《{o.title}》"
+        if o.structure:
+            try:
+                sd = json.loads(o.structure)
+                if sd.get('summary'):
+                    text += f"\n  概要：{sd['summary']}"
+                if sd.get('key_points'):
+                    kp = sd['key_points']
+                    if isinstance(kp, list):
+                        text += f"\n  要点：{'；'.join(str(x) for x in kp)}"
+                    else:
+                        text += f"\n  要点：{kp}"
+                # 重点角色/涉及组织（兼容新旧格式）
+                char_names, org_names = [], []
+                if sd.get('characters'):
+                    chars = sd['characters']
+                    if isinstance(chars, list):
+                        for c in chars:
+                            if isinstance(c, dict):
+                                if c.get('type') == 'organization':
+                                    org_names.append(c.get('name', ''))
+                                else:
+                                    char_names.append(c.get('name', ''))
+                            elif isinstance(c, str):
+                                char_names.append(c)
+                if char_names:
+                    text += f"\n  重点角色：{'、'.join(char_names)}"
+                if org_names:
+                    text += f"\n  涉及组织：{'、'.join(org_names)}"
+                if sd.get('scenes') and isinstance(sd['scenes'], list):
+                    scenes = [str(s) for s in sd['scenes']][:max_scenes]
+                    if scenes:
+                        text += f"\n  场景：{'；'.join(scenes)}"
+                if sd.get('goal'):
+                    text += f"\n  目标：{sd['goal']}"
+                if sd.get('emotion'):
+                    text += f"\n  情感：{sd['emotion']}"
+            except json.JSONDecodeError:
+                content = (o.content or "").strip()
+                text += f"\n  内容：{content[:200]}"
+        else:
+            content = (o.content or "").strip()
+            text += f"\n  内容：{content[:200]}"
+        blocks.append(text)
+    return "\n".join(blocks)
+
+
+def _build_outlines_older_brief(outlines: List[Outline], max_per: int = 80) -> str:
+    """构建更早卷的一行速览（标题 + goal 或 summary 前 max_per 字），低占用"""
+    if not outlines:
+        return "（无）"
+    lines = []
+    for o in outlines:
+        summary = ""
+        if o.structure:
+            try:
+                sd = json.loads(o.structure)
+                summary = sd.get('goal') or sd.get('summary') or ""
+            except json.JSONDecodeError:
+                summary = o.content or ""
+        else:
+            summary = o.content or ""
+        summary = str(summary).strip()
+        if len(summary) > max_per:
+            summary = summary[:max_per] + "..."
+        lines.append(f"第{o.order_index}卷《{o.title}》——{summary}")
+    return "\n".join(lines)
+
+
+async def _build_relationships_info(project_id: str, db: AsyncSession) -> str:
+    """构建全量关系网络（角色A ↔ 角色B：关系名，描述），用于续写方向建议"""
+    try:
+        rels_result = await db.execute(
+            select(CharacterRelationship)
+            .where(CharacterRelationship.project_id == project_id)
+        )
+        rels = rels_result.scalars().all()
+        if not rels:
+            return "（无记录的关系）"
+        # 收集相关角色名
+        related_ids = set()
+        for r in rels:
+            related_ids.add(r.character_from_id)
+            related_ids.add(r.character_to_id)
+        name_map: Dict[str, str] = {}
+        if related_ids:
+            names_result = await db.execute(
+                select(Character.id, Character.name).where(Character.id.in_(related_ids))
+            )
+            name_map = {str(row.id): row.name for row in names_result}
+        lines = []
+        for r in rels:
+            a = name_map.get(str(r.character_from_id), "未知")
+            b = name_map.get(str(r.character_to_id), "未知")
+            rel_name = r.relationship_name or "相关"
+            desc = (r.description or "").strip()
+            desc = ' '.join(desc.split())  # 清理换行/多余空白，紧凑展示
+            if len(desc) > 100:
+                desc = desc[:100] + "..."
+            line = f"{a} ↔ {b}：{rel_name}"
+            if r.intimacy_level is not None:
+                line += f"（亲密度{r.intimacy_level}）"
+            if desc:
+                line += f"，{desc}"
+            lines.append(line)
+        return "\n".join(lines)
+    except Exception as e:
+        logger.warning(f"构建关系信息失败: {e}")
+        return "（无记录的关系）"
+
 @router.post("", response_model=OutlineResponse, summary="创建大纲")
 async def create_outline(
     outline: OutlineCreate,
@@ -169,22 +288,25 @@ async def get_outlines(
     # 批量查询是否已展开章节（避免前端 N+1 请求）
     outline_ids = [outline.id for outline in outlines]
     outline_has_chapters_map: Dict[str, bool] = {}
+    outline_chapter_count_map: Dict[str, int] = {}
     if outline_ids:
         chapters_count_result = await db.execute(
             select(Chapter.outline_id, func.count(Chapter.id))
             .where(Chapter.outline_id.in_(outline_ids))
             .group_by(Chapter.outline_id)
         )
-        outline_has_chapters_map = {
-            str(outline_id): count > 0
-            for outline_id, count in chapters_count_result.all()
-            if outline_id
-        }
+        for outline_id, count in chapters_count_result.all():
+            if not outline_id:
+                continue
+            outline_has_chapters_map[str(outline_id)] = count > 0
+            outline_chapter_count_map[str(outline_id)] = count
 
     # 🔧 优化：后端完全解析structure，提取所有字段填充到outline对象
     for outline in outlines:
         # 动态附加是否已有章节展开状态，供前端直接使用
         setattr(outline, "has_chapters", outline_has_chapters_map.get(outline.id, False))
+        # 动态附加章节数量（大纲总览页展示 "已展开 · N 章"）
+        setattr(outline, "chapter_count", outline_chapter_count_map.get(outline.id, 0))
 
         if outline.structure:
             try:
@@ -2278,6 +2400,103 @@ async def outline_expand_advice(
         reason=reason,
         chapter_previews=[ExpandChapterPreview(**p) for p in previews],
     )
+
+
+@router.post("/continue-advice", response_model=OutlineContinueAdviceResponse, summary="续写方向AI建议（不入库，多轮对话）")
+async def outline_continue_advice(
+    payload: OutlineContinueAdviceRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """续写方向 AI 建议：基于已有大纲/角色/世界观生成多方向选项（不写入数据库，展示供采纳）
+
+    多轮对话：
+    - 无 context 且无 feedback：第一轮，给大方向
+    - 有 context 无 feedback：基于所选方向深入，给具体落点
+    - 有 feedback：按用户反馈重新生成
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(payload.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == payload.project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    outlines = list((await db.scalars(
+        select(Outline).where(Outline.project_id == payload.project_id).order_by(Outline.order_index)
+    )).all())
+    characters = list((await db.scalars(select(Character).where(Character.project_id == payload.project_id))).all())
+
+    context = (payload.context or "").strip()
+    feedback = (payload.feedback or "").strip()
+
+    # 大纲分层注入：最近 3 卷完整 structure 解析，更早卷一行速览（按 order_index 升序取末尾）
+    recent_outlines = outlines[-3:] if len(outlines) > 3 else outlines
+    older_outlines = outlines[:-3] if len(outlines) > 3 else []
+
+    template = await PromptService.get_template("OUTLINE_CONTINUE_ADVICE", user_id, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title or "未命名",
+        theme=project.theme or "未设定",
+        genre=project.genre or "通用",
+        narrative_perspective=project.narrative_perspective or "第三人称",
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        characters_info=_build_characters_info(characters) or "暂无角色信息",
+        relationships_info=await _build_relationships_info(payload.project_id, db),
+        outlines_detail=_build_outlines_detail(recent_outlines),
+        older_outlines=_build_outlines_older_brief(older_outlines),
+        context=context or "（第一轮，无上一轮选择）",
+        feedback=feedback or "（无）",
+        instruction=payload.instruction or "无",
+    )
+    system_prompt = build_skill_system_prompt(payload.skill_key)
+    if system_prompt:
+        logger.info(f"⚡ 已将 Skill '{payload.skill_key}' 注入系统提示词（续写方向建议）")
+
+    from app.services.ai_provider_service import create_routed_ai_service
+    service = await create_routed_ai_service(
+        db, user_id=user_id, usage_type="outline",
+        provider_config_id=payload.provider_config_id, model=payload.model,
+        project_id=payload.project_id,
+    )
+
+    max_retries = 3
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            result_text = await service.generate_text(prompt=prompt, system_prompt=system_prompt, auto_mcp=False)
+            raw = str(result_text.get("content") or "").strip()
+            data = loads_json(raw)
+            if not isinstance(data, dict):
+                raise ValueError("建议不是 JSON 对象")
+            prompt_text = str(data.get("prompt") or "").strip()
+            options_raw = data.get("options")
+            if not isinstance(options_raw, list):
+                raise ValueError("options 不是数组")
+            options: List[ContinueAdviceOption] = []
+            for item in options_raw:
+                if isinstance(item, dict) and item.get("title") and item.get("description"):
+                    options.append(ContinueAdviceOption(
+                        title=str(item["title"]).strip()[:20],
+                        description=str(item["description"]).strip()[:60],
+                        conflict=str(item.get("conflict") or "").strip()[:60] or None,
+                        plotline=str(item.get("plotline") or "").strip()[:60] or None,
+                    ))
+            if len(options) < 3:
+                raise ValueError(f"有效选项不足（仅{len(options)}条）")
+            return OutlineContinueAdviceResponse(
+                prompt=prompt_text or "请选择你倾向的续写方向：",
+                options=options[:4],
+            )
+        except Exception as e:
+            last_error = e
+            logger.warning(f"续写方向建议解析失败（第{attempt + 1}次尝试）：{e}")
+            continue
+    raise HTTPException(status_code=502, detail=f"AI 建议解析失败：{last_error}")
 
 
 @router.post("/comparison-batches", response_model=LLMComparisonBatchResponse, summary="创建大纲多模型候选")

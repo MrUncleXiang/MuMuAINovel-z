@@ -11,6 +11,8 @@ TargetType = Literal["chapter", "outline", "analysis"]
 class LLMComparisonSelection(BaseModel):
     provider_config_id: str
     model: str = Field(..., min_length=1, max_length=150)
+    skill_key: Optional[str] = Field(None, description="该模型单独使用的 Skill；不填则跟随批次级 skill_key")
+    target_word_count: Optional[int] = Field(None, ge=500, le=10000, description="该模型单独的目标字数；不填则跟随批次级 target_word_count")
 
     @field_validator("model")
     @classmethod
