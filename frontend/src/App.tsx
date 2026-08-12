@@ -9,6 +9,8 @@ const Inspiration = lazy(() => import('./pages/Inspiration'));
 const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
 const WorldSetting = lazy(() => import('./pages/WorldSetting'));
 const Outline = lazy(() => import('./pages/Outline'));
+const OutlineOverview = lazy(() => import('./pages/OutlineOverview'));
+const BodyReader = lazy(() => import('./pages/BodyReader'));
 const Characters = lazy(() => import('./pages/Characters'));
 const Careers = lazy(() => import('./pages/Careers'));
 const Relationships = lazy(() => import('./pages/Relationships'));
@@ -77,6 +79,8 @@ function App() {
             <Route path="world-setting" element={<WorldSetting />} />
             <Route path="careers" element={<Careers />} />
             <Route path="outline" element={<Outline />} />
+            <Route path="outline-overview" element={<OutlineOverview />} />
+            <Route path="body-reader" element={<BodyReader />} />
             <Route path="characters" element={<Characters />} />
             <Route path="relationships" element={<Relationships />} />
             <Route path="relationships-graph" element={<RelationshipGraph />} />

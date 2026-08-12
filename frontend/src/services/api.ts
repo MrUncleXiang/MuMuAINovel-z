@@ -840,8 +840,12 @@ export const characterApi = {
 };
 
 export const chapterApi = {
-  getChapters: (projectId: string) =>
-    api.get<unknown, { total: number; items: Chapter[] }>(`/chapters/project/${projectId}`).then(res => res.items),
+  getChapters: (projectId: string, params?: { include_content?: boolean }) => {
+    const query = params?.include_content === false ? '?include_content=false' : '';
+    return api
+      .get<unknown, { total: number; items: Chapter[] }>(`/chapters/project/${projectId}${query}`)
+      .then(res => res.items);
+  },
 
   getChapter: (id: string) => api.get<unknown, Chapter>(`/chapters/${id}`),
 

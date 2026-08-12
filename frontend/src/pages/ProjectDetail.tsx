@@ -4,6 +4,7 @@ import { Layout, Menu, Spin, Button, Drawer, Space, message, theme } from 'antd'
 import {
   ArrowLeftOutlined,
   FileTextOutlined,
+  ReadOutlined,
   TeamOutlined,
   BookOutlined,
   // ToolOutlined,
@@ -21,6 +22,8 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   HistoryOutlined,
+  FileSearchOutlined,
+  ProfileOutlined,
   RocketOutlined,
   CopyOutlined,
 } from '@ant-design/icons';
@@ -160,6 +163,16 @@ export default function ProjectDetail() {
           label: <Link to={`/project/${projectId}/outline`}>大纲管理</Link>,
         },
         {
+          key: 'outline-overview',
+          icon: <ReadOutlined />,
+          label: <Link to={`/project/${projectId}/outline-overview`}>大纲总览</Link>,
+        },
+        {
+          key: 'body-reader',
+          icon: <ProfileOutlined />,
+          label: <Link to={`/project/${projectId}/body-reader`}>正文阅读</Link>,
+        },
+        {
           key: 'chapters',
           icon: <BookOutlined />,
           label: <Link to={`/project/${projectId}/chapters`}>章节管理</Link>,
@@ -199,6 +212,11 @@ export default function ProjectDetail() {
           key: 'skill-manage',
           icon: <SettingOutlined />,
           label: <Link to={`/project/${projectId}/skill-manage`}>Skill 管理</Link>,
+        },
+        {
+          key: 'review-config',
+          icon: <FileSearchOutlined />,
+          label: <Link to={`/project/${projectId}/review-config`}>本书审查配置</Link>,
         },
         {
           key: 'ai-usage',
@@ -244,6 +262,16 @@ export default function ProjectDetail() {
       key: 'outline',
       icon: <FileTextOutlined />,
       label: <Link to={`/project/${projectId}/outline`}>大纲管理</Link>,
+    },
+    {
+      key: 'outline-overview',
+      icon: <ReadOutlined />,
+      label: <Link to={`/project/${projectId}/outline-overview`}>大纲总览</Link>,
+    },
+    {
+      key: 'body-reader',
+      icon: <ProfileOutlined />,
+      label: <Link to={`/project/${projectId}/body-reader`}>正文阅读</Link>,
     },
     {
       key: 'chapters',
@@ -294,6 +322,9 @@ export default function ProjectDetail() {
     if (path.includes('/careers')) return 'careers';
     if (path.includes('/relationships')) return 'relationships';
     if (path.includes('/organizations')) return 'organizations';
+    // ⚠️ 注意顺序：outline-overview 必须先于 outline 判断，否则 /outline-overview 会被 /outline 误匹配
+    if (path.includes('/outline-overview')) return 'outline-overview';
+    if (path.includes('/body-reader')) return 'body-reader';
     if (path.includes('/outline')) return 'outline';
     if (path.includes('/characters')) return 'characters';
     if (path.includes('/chapter-analysis')) return 'chapter-analysis';

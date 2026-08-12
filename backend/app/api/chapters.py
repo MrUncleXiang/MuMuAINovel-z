@@ -241,9 +241,14 @@ async def create_chapter(
 async def get_project_chapters(
     project_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    include_content: bool = True,
 ):
-    """获取指定项目的所有章节（带大纲信息）"""
+    """获取指定项目的所有章节（带大纲信息）
+
+    include_content=False 时 content 置 None（轻量目录模式，正文按章单独加载）。
+    默认 True 保持全量返回，现有调用方不受影响。
+    """
     # 验证用户权限
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(project_id, user_id, db)
@@ -279,7 +284,7 @@ async def get_project_chapters(
             "project_id": chapter.project_id,
             "chapter_number": chapter.chapter_number,
             "title": chapter.title,
-            "content": chapter.content,
+            "content": chapter.content if include_content else None,
             "summary": chapter.summary,
             "word_count": chapter.word_count,
             "status": chapter.status,

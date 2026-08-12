@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Segmented, Row, Col, Checkbox, theme, Tabs } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, ExclamationCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
@@ -55,6 +56,7 @@ const setCachedWordCount = (value: number): void => {
 };
 
 export default function Chapters() {
+  const navigate = useNavigate();
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
   const [modal, contextHolder] = Modal.useModal();
   const { token } = theme.useToken();
@@ -2371,6 +2373,16 @@ export default function Chapters() {
             size={isMobile ? 'middle' : 'middle'}
           >
             全部删除
+          </Button>
+          <Button
+            type="default"
+            icon={<ReadOutlined />}
+            onClick={() => currentProject && navigate(`/project/${currentProject.id}/body-reader`)}
+            disabled={chapters.length === 0}
+            block={isMobile}
+            size={isMobile ? 'middle' : 'middle'}
+          >
+            正文阅读
           </Button>
           <Button
             type="default"
