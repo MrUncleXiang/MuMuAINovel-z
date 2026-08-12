@@ -52,3 +52,73 @@ python3 .trellis/scripts/task.py create "体检冒烟测试" --no-start  # 能�
 - **"能用"不等于"完整"**：工作流运转正常时，更要主动检查"引用、占位、缺失文件"。
 - **引用即承诺**：文档里出现路径/文件名，就是承诺它存在——写文档时顺手验证，读文档时顺手抽查。
 - **先摸后写**：补文档时基于真实目录/版本/命令，不编造占位符内容。
+
+## Trellis 注入失效排查（2026-08-12 事故）
+
+**症状**：`<workflow-state>` 注入显示过时/错误的旧任务，AI 不按当前工作流行事。
+
+**根因**：任务归档时 `clear_task_from_sessions()` 删除所有指向被归档任务的 session 文件——**包括当前活跃会话的指针**。归档后无自动重建，`task.py current` 走 single-session fallback 到残留孤儿文件（可能指向数天前的旧任务），注入持续错误。
+
+**排查步骤**：
+```bash
+# 1. 当前解析到谁（注意 source 是否 session-fallback + context_key 是否过时）
+python3 .trellis/scripts/task.py current --source
+# 2. 当前会话 context key 是否正确
+python3 -c "import sys; sys.path.insert(0,'.trellis/scripts'); from common.active_task import resolve_context_key; print(resolve_context_key())"
+# 3. sessions 目录是否有当前会话文件
+ls .trellis/.runtime/sessions/
+```
+
+**修复（归档最后一个活跃任务后必须执行）**：
+```bash
+# 1. 删除孤儿文件（fallback 锚点）
+rm .trellis/.runtime/sessions/<旧会话id>.json
+# 2. 重建当前会话空指针
+python3 - <<'EOF'
+import json
+from pathlib import Path
+import sys; sys.path.insert(0, '.trellis/scripts')
+from common.active_task import resolve_context_key, _context_path
+repo = Path.cwd()
+key = resolve_context_key()
+if key:
+    p = _context_path(repo, key)
+    p.write_text(json.dumps({"platform": "pi", "last_seen_at": "", "current_task": None, "current_run": None}, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("已重建:", p)
+
+
+## Trellis 注入失效排查（2026-08-12 事故）
+
+**症状**：<workflow-state> 注入显示过时/错误的旧任务，AI 不按当前工作流行事。
+
+**根因**：任务归档时 clear_task_from_sessions() 删除所有指向被归档任务的 session 文件——包括当前活跃会话的指针。归档后无自动重建，task.py current 走 single-session fallback 到残留孤儿文件（可能指向数天前的旧任务），注入持续错误。
+
+**排查步骤**：
+```bash
+# 1. 当前解析到谁（注意 source 是否 session-fallback + context_key 是否过时）
+python3 .trellis/scripts/task.py current --source
+# 2. 当前会话 context key 是否正确（应显示 pi_<当前会话id>）
+python3 -c "import sys; sys.path.insert(0,'.trellis/scripts'); from common.active_task import resolve_context_key; print(resolve_context_key())"
+# 3. sessions 目录是否有当前会话文件
+ls .trellis/.runtime/sessions/
+```
+
+**修复（归档最后一个活跃任务后必须执行）**：
+```bash
+# 1. 删除孤儿文件（fallback 锚点）
+rm .trellis/.runtime/sessions/<旧会话id>.json
+# 2. 重建当前会话空指针（current_task 空 = no task）
+python3 -c "
+import sys, json
+from pathlib import Path
+sys.path.insert(0, '.trellis/scripts')
+from common.active_task import resolve_context_key, _context_path
+key = resolve_context_key()
+if key:
+    p = _context_path(Path.cwd(), key)
+    p.write_text(json.dumps({'platform':'pi','last_seen_at':'','current_task':None,'current_run':None}, ensure_ascii=False) + chr(10), encoding='utf-8')
+    print('已重建:', p)
+"
+# 3. 验证（应返回 Current task: (none)）
+python3 .trellis/scripts/task.py current --source
+```
